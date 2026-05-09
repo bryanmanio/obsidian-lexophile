@@ -1,0 +1,8 @@
+node_modules/
+*.js.map
+.DS_Store
+.claude/
+
+# Plugin build output (committed-by-default would conflict with development)
+obsidian-plugin/main.js
+obsidian-plugin/data.json

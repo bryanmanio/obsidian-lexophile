@@ -1,0 +1,10 @@
+{
+	"id": "lexophile",
+	"name": "Lexophile",
+	"version": "0.1.0",
+	"minAppVersion": "0.15.0",
+	"description": "Receive word definitions from the Chrome extension and create dictionary notes.",
+	"author": "Bryan",
+	"authorUrl": "",
+	"isDesktopOnly": true
+}

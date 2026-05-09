@@ -1,0 +1,146 @@
+import { App, TFile, TFolder, normalizePath } from 'obsidian';
+import { ensureDictionaryBase } from './base';
+import type { DictionarySettings } from './settings';
+
+export interface WordEntry {
+	word: string;
+	partOfSpeech?: string;
+	definition: string;
+	example?: string;
+	phonetic?: string;
+	source?: string;
+}
+
+export interface NoteResult {
+	created: boolean;
+	path: string;
+	action: 'created' | 'skipped' | 'appended' | 'overwritten';
+}
+
+export async function createWordNote(
+	app: App,
+	settings: DictionarySettings,
+	entry: WordEntry
+): Promise<NoteResult> {
+	const { vault } = app;
+
+	let filename = entry.word.trim();
+	if (settings.namingConvention === 'lowercase') {
+		filename = filename.toLowerCase();
+	} else if (settings.namingConvention === 'titlecase') {
+		filename = filename.charAt(0).toUpperCase() + filename.slice(1).toLowerCase();
+	}
+
+	// Strip characters that are invalid in Obsidian filenames
+	filename = filename.replace(/[\\/:*?"<>|#^[\]]/g, '');
+
+	const folderPath = normalizePath(settings.folder);
+	const filePath = normalizePath(`${folderPath}/${filename}.md`);
+
+	await ensureFolder(app, folderPath);
+
+	const existing = vault.getAbstractFileByPath(filePath);
+
+	if (existing instanceof TFile) {
+		if (settings.duplicateHandling === 'skip') {
+			await ensureDictionaryBase(app, settings);
+			return { created: false, path: filePath, action: 'skipped' };
+		}
+
+		if (settings.duplicateHandling === 'append') {
+			const current = await vault.read(existing);
+			const addition = '\n\n---\n\n' + renderEntry(entry, settings, false);
+			await vault.modify(existing, current + addition);
+			await ensureDictionaryBase(app, settings);
+			return { created: false, path: filePath, action: 'appended' };
+		}
+
+		await vault.delete(existing);
+	}
+
+	await vault.create(filePath, renderEntry(entry, settings, true));
+	await ensureDictionaryBase(app, settings);
+
+	const action = existing ? 'overwritten' : 'created';
+	return { created: true, path: filePath, action };
+}
+
+// Walks the path and creates each missing segment. `vault.createFolder` accepts
+// nested paths, but only when the parent chain exists or it can create them
+// recursively — being explicit avoids edge cases on cloud-synced vaults.
+async function ensureFolder(app: App, folderPath: string): Promise<void> {
+	const parts = folderPath.split('/').filter(Boolean);
+	let current = '';
+	for (const part of parts) {
+		current = current ? `${current}/${part}` : part;
+		const existing = app.vault.getAbstractFileByPath(current);
+		if (!existing) {
+			await app.vault.createFolder(current);
+		} else if (!(existing instanceof TFolder)) {
+			throw new Error(`"${current}" exists but is not a folder.`);
+		}
+	}
+}
+
+function renderEntry(
+	entry: WordEntry,
+	settings: DictionarySettings,
+	includeFrontmatter: boolean
+): string {
+	const today = new Date().toISOString().split('T')[0];
+	const values: Record<string, string> = {
+		word: entry.word,
+		partOfSpeech: entry.partOfSpeech ?? '',
+		definition: entry.definition,
+		example: entry.example ?? '',
+		phonetic: entry.phonetic ?? '',
+		date: today,
+		source: entry.source ?? '',
+	};
+
+	const template = settings.template;
+	const fmMatch = template.match(/^(---\n)([\s\S]*?)(\n---\n?)([\s\S]*)$/);
+
+	let output: string;
+	if (fmMatch) {
+		const [, fmStart, fmContent, fmEnd, body] = fmMatch;
+		const renderedFm = substitute(fmContent, values, escapeYamlDouble);
+		const renderedBody = substitute(body, values, (s) => s);
+		output = includeFrontmatter ? fmStart + renderedFm + fmEnd + renderedBody : renderedBody;
+	} else {
+		output = substitute(template, values, (s) => s);
+	}
+
+	return stripEmptyLabelLines(output);
+}
+
+function substitute(
+	text: string,
+	values: Record<string, string>,
+	transform: (s: string) => string
+): string {
+	return text.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+		if (key in values) return transform(values[key]);
+		return match;
+	});
+}
+
+// Escape a value for placement inside a YAML double-quoted scalar.
+function escapeYamlDouble(value: string): string {
+	return (value ?? '')
+		.replace(/\\/g, '\\\\')
+		.replace(/"/g, '\\"')
+		.replace(/\n/g, '\\n')
+		.replace(/\r/g, '\\r')
+		.replace(/\t/g, '\\t');
+}
+
+// Removes body lines that look like "**Label:** " with no value after substitution.
+// Frontmatter (key: value) lines are untouched — they don't match the **bold** pattern.
+function stripEmptyLabelLines(content: string): string {
+	return content
+		.split('\n')
+		.filter((line) => !/^\s*\*\*[^*]+:\*\*\s*$/.test(line))
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n');
+}

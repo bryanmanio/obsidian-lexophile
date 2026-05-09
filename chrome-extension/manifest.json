@@ -1,0 +1,24 @@
+{
+	"manifest_version": 3,
+	"name": "Lexophile",
+	"version": "0.1.0",
+	"description": "Right-click any word to add it to your Obsidian lexicon.",
+	"permissions": ["contextMenus", "storage", "scripting", "activeTab"],
+	"host_permissions": [
+		"https://api.dictionaryapi.dev/*",
+		"http://127.0.0.1/*",
+		"http://127.0.0.1:*/*",
+		"http://localhost/*",
+		"http://localhost:*/*"
+	],
+	"background": {
+		"service_worker": "background.js"
+	},
+	"options_ui": {
+		"page": "options.html",
+		"open_in_tab": false
+	},
+	"action": {
+		"default_title": "Lexophile — open options"
+	}
+}
