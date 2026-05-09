@@ -6,10 +6,12 @@
 	"permissions": ["contextMenus", "storage", "scripting", "activeTab"],
 	"host_permissions": [
 		"https://api.dictionaryapi.dev/*",
+		"http://127.0.0.1:27124/*",
+		"http://localhost:27124/*"
+	],
+	"optional_host_permissions": [
 		"http://127.0.0.1/*",
-		"http://127.0.0.1:*/*",
-		"http://localhost/*",
-		"http://localhost:*/*"
+		"http://localhost/*"
 	],
 	"background": {
 		"service_worker": "background.js"

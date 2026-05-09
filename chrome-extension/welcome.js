@@ -16,9 +16,36 @@ function setStatus(text, cls) {
 	el.className = 'status' + (cls ? ' ' + cls : '');
 }
 
+function originPatternFromUrl(serverUrl) {
+	try {
+		const u = new URL(serverUrl);
+		if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+		if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return null;
+		const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+		return `${u.protocol}//${u.hostname}:${port}/*`;
+	} catch {
+		return null;
+	}
+}
+
+async function ensurePermission(serverUrl) {
+	const pattern = originPatternFromUrl(serverUrl);
+	if (!pattern) return true;
+	const has = await chrome.permissions.contains({ origins: [pattern] });
+	if (has) return true;
+	return chrome.permissions.request({ origins: [pattern] });
+}
+
 async function testConnection() {
 	const serverUrl = ($('serverUrl').value.trim() || DEFAULT_SERVER).replace(/\/$/, '');
 	const token = $('apiToken').value.trim();
+
+	const granted = await ensurePermission(serverUrl);
+	if (!granted) {
+		testPassed = false;
+		setStatus('Permission denied for that host.', 'err');
+		return;
+	}
 
 	setStatus('Testing…', '');
 
@@ -72,6 +99,12 @@ async function finish() {
 	const apiToken = $('apiToken').value.trim();
 
 	if (!apiToken) return;
+
+	const granted = await ensurePermission(serverUrl);
+	if (!granted) {
+		setStatus('Permission denied for that host. Cannot finish setup.', 'err');
+		return;
+	}
 
 	await chrome.storage.sync.set({
 		serverUrl,
