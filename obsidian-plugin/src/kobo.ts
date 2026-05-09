@@ -10,6 +10,17 @@ export interface KoboWord {
 	dateCreated: string;
 }
 
+// Strips leading/trailing punctuation, quotes, brackets, dashes, and whitespace
+// that often come from imprecise highlighting on the device — "serendipity,"
+// becomes "serendipity", "(book." becomes "book". Internal punctuation
+// (apostrophes in "don't", hyphens in "well-being") is preserved.
+const TRIM_CHARS = /^[\s.,;:!?'"`‘’“”()[\]{}<>—–\-]+|[\s.,;:!?'"`‘’“”()[\]{}<>—–\-]+$/g;
+
+export function cleanKoboWord(text: string): string {
+	if (!text) return '';
+	return text.replace(TRIM_CHARS, '').trim();
+}
+
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
 
 // Lazy-init so plugin load is unaffected for users who never run the import.
@@ -70,9 +81,10 @@ export async function readKoboWords(filePath: string): Promise<KoboWord[]> {
 		const rows: KoboWord[] = [];
 		while (stmt.step()) {
 			const row = stmt.getAsObject() as { word?: string; bookTitle?: string | null; dateCreated?: string };
-			if (row.word) {
+			const cleaned = cleanKoboWord(String(row.word ?? ''));
+			if (cleaned) {
 				rows.push({
-					word: String(row.word).trim(),
+					word: cleaned,
 					bookTitle: row.bookTitle ? String(row.bookTitle) : null,
 					dateCreated: row.dateCreated ? String(row.dateCreated) : '',
 				});

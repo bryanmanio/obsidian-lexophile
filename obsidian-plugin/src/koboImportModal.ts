@@ -251,8 +251,10 @@ export class KoboImportModal extends Modal {
 
 		for (const item of visible) {
 			const row = this.listEl.createDiv();
+			// CSS grid keeps every column aligned regardless of which rows
+			// have the "already saved" tag.
 			row.style.cssText =
-				'display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
+				'display: grid; grid-template-columns: auto 1fr 220px 110px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
 			row.addEventListener('click', (e) => {
 				if ((e.target as HTMLElement).tagName === 'INPUT') return;
 				item.checked = !item.checked;
@@ -268,7 +270,7 @@ export class KoboImportModal extends Modal {
 			});
 
 			const word = row.createDiv();
-			word.style.cssText = 'flex: 1; font-size: 14px;';
+			word.style.cssText = 'font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
 			word.textContent = item.kobo.word;
 			if (item.duplicate) {
 				word.style.color = 'var(--text-muted)';
@@ -277,15 +279,18 @@ export class KoboImportModal extends Modal {
 
 			const book = row.createDiv();
 			book.style.cssText =
-				'flex: 0 0 220px; color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+				'color: var(--text-muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
 			book.textContent = item.bookName || '(no book)';
 			book.title = item.bookName || '(no book)';
 
+			// Always-present tag cell so the column grid stays aligned across rows.
+			const tagCell = row.createDiv();
+			tagCell.style.cssText = 'text-align: right;';
 			if (item.duplicate) {
-				const tag = row.createDiv();
-				tag.style.cssText =
-					'flex: 0 0 auto; font-size: 11px; padding: 2px 8px; background: var(--background-modifier-border); border-radius: 10px; color: var(--text-muted);';
-				tag.textContent = 'already saved';
+				const pill = tagCell.createSpan();
+				pill.style.cssText =
+					'font-size: 11px; padding: 2px 8px; background: var(--background-modifier-border); border-radius: 10px; color: var(--text-muted); white-space: nowrap;';
+				pill.textContent = 'already saved';
 			}
 		}
 
