@@ -1,7 +1,7 @@
 {
 	"name": "lexophile",
 	"version": "0.1.0",
-	"description": "Obsidian plugin that receives word definitions from the Chrome extension",
+	"description": "Build your vocabulary one word at a time. Add manually, or grab it instantly with the Chrome extension.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -9,9 +9,11 @@
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",
+		"@types/sql.js": "^1.4.11",
 		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.20.0",
 		"obsidian": "latest",
+		"sql.js": "^1.14.1",
 		"tslib": "^2.6.0",
 		"typescript": "^5.4.0"
 	}

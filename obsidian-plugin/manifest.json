@@ -1,10 +1,10 @@
 {
 	"id": "lexophile",
-	"name": "Lexophile",
+	"name": "Lexophile - Personal Dictionary",
 	"version": "0.1.0",
 	"minAppVersion": "0.15.0",
-	"description": "Receive word definitions from the Chrome extension and create dictionary notes.",
-	"author": "Bryan",
-	"authorUrl": "",
+	"description": "Build your vocabulary one word at a time. Add manually, or grab it instantly with the Chrome extension.",
+	"author": "Bryan Maniotakis",
+	"authorUrl": "https://github.com/bryanmanio",
 	"isDesktopOnly": true
 }

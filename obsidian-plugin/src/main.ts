@@ -1,6 +1,7 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, Plugin, PluginSettingTab, Setting, TFolder, normalizePath } from 'obsidian';
 import { DictionaryServer } from './server';
 import { AddWordModal } from './wordModal';
+import { KoboImportModal } from './koboImportModal';
 import { DEFAULT_SETTINGS, DEFAULT_TEMPLATE } from './settings';
 import type { DictionarySettings } from './settings';
 
@@ -26,6 +27,18 @@ export default class DictionaryPlugin extends Plugin {
 			name: 'Add word to lexicon',
 			callback: () => {
 				new AddWordModal(this.app, () => this.settings).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'import-kobo',
+			name: 'Import words from Kobo',
+			callback: () => {
+				if (!this.settings.enableKoboImport) {
+					new Notice('Lexophile: enable Kobo import in Settings → Lexophile first.');
+					return;
+				}
+				new KoboImportModal(this.app, () => this.settings).open();
 			},
 		});
 
@@ -170,6 +183,104 @@ class DictionarySettingTab extends PluginSettingTab {
 				);
 		}
 
+		// ── Kobo eReader import ──────────────────────────────────────
+
+		containerEl.createEl('h3', { text: 'Kobo eReader import' });
+
+		const koboIntro = containerEl.createEl('p', { cls: 'setting-item-description' });
+		koboIntro.appendText('Import words you saved on your Kobo. Plug your Kobo into your computer, then run ');
+		koboIntro.createEl('strong', { text: 'Lexophile: Import words from Kobo' });
+		koboIntro.appendText(' from the command palette. Each word becomes a dictionary note; its source links back to the book it came from in your library.');
+
+		new Setting(containerEl)
+			.setName('Enable Kobo import')
+			.setDesc('Reveals the Kobo settings and unlocks the import command.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.enableKoboImport).onChange(async (value) => {
+					this.plugin.settings.enableKoboImport = value;
+					await this.plugin.saveSettings();
+					this.display();
+				})
+			);
+
+		if (this.plugin.settings.enableKoboImport) {
+			const booksFolderPath = normalizePath(this.plugin.settings.booksFolder || 'Books');
+			const folderExists = this.app.vault.getAbstractFileByPath(booksFolderPath) instanceof TFolder;
+
+			// Build the dropdown options: every existing folder in the vault, plus
+			// "Books" (the default) and the current setting value, even if those
+			// don't exist yet (so they remain selectable).
+			const existingFolders: string[] = [];
+			const walk = (folder: TFolder) => {
+				if (folder.path) existingFolders.push(folder.path);
+				for (const child of folder.children) {
+					if (child instanceof TFolder) walk(child);
+				}
+			};
+			walk(this.app.vault.getRoot());
+			existingFolders.sort((a, b) => a.localeCompare(b));
+
+			const dropdownOptions = new Set<string>(existingFolders);
+			dropdownOptions.add('Books');
+			if (this.plugin.settings.booksFolder) {
+				dropdownOptions.add(this.plugin.settings.booksFolder);
+			}
+			const sortedOptions = Array.from(dropdownOptions).sort((a, b) => a.localeCompare(b));
+
+			new Setting(containerEl)
+				.setName('Books folder')
+				.setDesc(
+					folderExists
+						? `✓ Folder exists at "${booksFolderPath}". New book notes will be created here.`
+						: `"${booksFolderPath}" doesn't exist yet. Create it below or pick another folder.`
+				)
+				.addDropdown((drop) => {
+					for (const folder of sortedOptions) {
+						const exists = this.app.vault.getAbstractFileByPath(normalizePath(folder)) instanceof TFolder;
+						drop.addOption(folder, exists ? folder : `${folder} (will be created)`);
+					}
+					drop
+						.setValue(this.plugin.settings.booksFolder || 'Books')
+						.onChange(async (value) => {
+							this.plugin.settings.booksFolder = value;
+							await this.plugin.saveSettings();
+							this.display();
+						});
+				});
+
+			if (!folderExists) {
+				new Setting(containerEl)
+					.setName('Create books folder')
+					.setDesc(`Creates "${booksFolderPath}" so wikilinks resolve.`)
+					.addButton((btn) =>
+						btn.setButtonText('Create folder').setCta().onClick(async () => {
+							try {
+								await this.app.vault.createFolder(booksFolderPath);
+								new Notice(`Lexophile: created "${booksFolderPath}".`);
+								this.display();
+							} catch (err) {
+								new Notice(`Lexophile: ${(err as Error).message}`);
+							}
+						})
+					);
+			}
+
+			new Setting(containerEl)
+				.setName("When a book isn't in your library")
+				.setDesc('What to do during import if the chosen book name has no matching note in the books folder.')
+				.addDropdown((drop) =>
+					drop
+						.addOption('create', 'Auto-create a stub book note')
+						.addOption('linkOnly', 'Link without creating (red wikilinks)')
+						.addOption('plainText', 'Use plain text source instead')
+						.setValue(this.plugin.settings.unmatchedBookHandling)
+						.onChange(async (value) => {
+							this.plugin.settings.unmatchedBookHandling = value as DictionarySettings['unmatchedBookHandling'];
+							await this.plugin.saveSettings();
+						})
+				);
+		}
+
 		// ── Server ───────────────────────────────────────────────────
 
 		containerEl.createEl('h3', { text: 'Local server' });
@@ -245,12 +356,24 @@ class DictionarySettingTab extends PluginSettingTab {
 
 		// ── Feedback ─────────────────────────────────────────────────
 
-		containerEl.createEl('h3', { text: 'Feedback & support' });
-		const feedback = containerEl.createEl('p', { cls: 'setting-item-description' });
-		feedback.appendText('Feature requests or support: ');
-		feedback.createEl('a', {
-			text: 'lexophile@fastmail.com',
-			href: 'mailto:lexophile@fastmail.com',
+		const support = containerEl.createEl('p', { cls: 'setting-item-description' });
+		support.appendText('Need support? ');
+		support.createEl('a', {
+			text: 'File an issue on GitHub',
+			href: 'https://github.com/bryanmanio/obsidian-lexophile/issues/new',
 		});
+		support.appendText('.');
+
+		const bmcWrap = containerEl.createEl('p');
+		bmcWrap.style.marginTop = '14px';
+		const bmcLink = bmcWrap.createEl('a', {
+			href: 'https://buymeacoffee.com/bryanmanio',
+		});
+		bmcLink.setAttr('target', '_blank');
+		bmcLink.setAttr('rel', 'noopener');
+		const bmcImg = bmcLink.createEl('img');
+		bmcImg.src = 'https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png';
+		bmcImg.alt = 'Buy Me A Coffee';
+		bmcImg.style.cssText = 'height: 40px; width: auto; border-radius: 8px;';
 	}
 }

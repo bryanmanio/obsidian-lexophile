@@ -1,5 +1,6 @@
 export type NamingConvention = 'asis' | 'lowercase' | 'titlecase';
 export type DuplicateHandling = 'skip' | 'append' | 'overwrite';
+export type UnmatchedBookHandling = 'create' | 'linkOnly' | 'plainText';
 
 export interface DictionarySettings {
 	folder: string;
@@ -10,6 +11,9 @@ export interface DictionarySettings {
 	duplicateHandling: DuplicateHandling;
 	autoCreateBase: boolean;
 	baseName: string;
+	enableKoboImport: boolean;
+	booksFolder: string;
+	unmatchedBookHandling: UnmatchedBookHandling;
 }
 
 export const DEFAULT_TEMPLATE = `---
@@ -29,11 +33,14 @@ definition: "{{definition}}"
 
 export const DEFAULT_SETTINGS: DictionarySettings = {
 	folder: 'Dictionary',
-	namingConvention: 'asis',
+	namingConvention: 'titlecase',
 	template: DEFAULT_TEMPLATE,
 	port: 27124,
 	apiToken: '',
 	duplicateHandling: 'skip',
 	autoCreateBase: true,
 	baseName: '_Dictionary List',
+	enableKoboImport: false,
+	booksFolder: 'Books',
+	unmatchedBookHandling: 'create',
 };

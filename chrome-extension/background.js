@@ -9,7 +9,7 @@ const MENU_ID = 'lexophile-add-word';
 chrome.runtime.onInstalled.addListener((details) => {
 	chrome.contextMenus.create({
 		id: MENU_ID,
-		title: 'Add "%s" to Lexophile',
+		title: 'Add word to Obsidian',
 		contexts: ['selection'],
 	});
 

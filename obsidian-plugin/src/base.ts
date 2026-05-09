@@ -15,6 +15,13 @@ export async function ensureDictionaryBase(app: App, settings: DictionarySetting
   and:
     - file.inFolder("${folderPath}")
     - file.ext != "base"
+properties:
+  file.name:
+    displayName: Word
+  word-class:
+    displayName: Word class
+  date-added:
+    displayName: Date added
 views:
   - type: table
     name: All words
