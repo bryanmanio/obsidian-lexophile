@@ -17,6 +17,25 @@ export interface NoteResult {
 	action: 'created' | 'skipped' | 'appended' | 'overwritten';
 }
 
+// Derives the on-disk path a given word would be written to, given the
+// dictionary folder + naming convention. Used by the importer to detect
+// duplicates without invoking the full create pipeline.
+export function wordNotePath(settings: DictionarySettings, word: string): string {
+	let filename = word.trim();
+	if (settings.namingConvention === 'lowercase') {
+		filename = filename.toLowerCase();
+	} else if (settings.namingConvention === 'titlecase') {
+		filename = filename.charAt(0).toUpperCase() + filename.slice(1).toLowerCase();
+	}
+	filename = filename.replace(/[\\/:*?"<>|#^[\]]/g, '');
+	const folderPath = normalizePath(settings.folder);
+	return normalizePath(`${folderPath}/${filename}.md`);
+}
+
+export function wordNoteExists(app: App, settings: DictionarySettings, word: string): boolean {
+	return app.vault.getAbstractFileByPath(wordNotePath(settings, word)) instanceof TFile;
+}
+
 export async function createWordNote(
 	app: App,
 	settings: DictionarySettings,
@@ -24,18 +43,8 @@ export async function createWordNote(
 ): Promise<NoteResult> {
 	const { vault } = app;
 
-	let filename = entry.word.trim();
-	if (settings.namingConvention === 'lowercase') {
-		filename = filename.toLowerCase();
-	} else if (settings.namingConvention === 'titlecase') {
-		filename = filename.charAt(0).toUpperCase() + filename.slice(1).toLowerCase();
-	}
-
-	// Strip characters that are invalid in Obsidian filenames
-	filename = filename.replace(/[\\/:*?"<>|#^[\]]/g, '');
-
+	const filePath = wordNotePath(settings, entry.word);
 	const folderPath = normalizePath(settings.folder);
-	const filePath = normalizePath(`${folderPath}/${filename}.md`);
 
 	await ensureFolder(app, folderPath);
 

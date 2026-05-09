@@ -2,6 +2,7 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, TFolder, normalizePath 
 import { DictionaryServer } from './server';
 import { AddWordModal } from './wordModal';
 import { KoboImportModal } from './koboImportModal';
+import { FolderSuggest } from './folderSuggest';
 import { DEFAULT_SETTINGS, DEFAULT_TEMPLATE } from './settings';
 import type { DictionarySettings } from './settings';
 
@@ -207,26 +208,6 @@ class DictionarySettingTab extends PluginSettingTab {
 			const booksFolderPath = normalizePath(this.plugin.settings.booksFolder || 'Books');
 			const folderExists = this.app.vault.getAbstractFileByPath(booksFolderPath) instanceof TFolder;
 
-			// Build the dropdown options: every existing folder in the vault, plus
-			// "Books" (the default) and the current setting value, even if those
-			// don't exist yet (so they remain selectable).
-			const existingFolders: string[] = [];
-			const walk = (folder: TFolder) => {
-				if (folder.path) existingFolders.push(folder.path);
-				for (const child of folder.children) {
-					if (child instanceof TFolder) walk(child);
-				}
-			};
-			walk(this.app.vault.getRoot());
-			existingFolders.sort((a, b) => a.localeCompare(b));
-
-			const dropdownOptions = new Set<string>(existingFolders);
-			dropdownOptions.add('Books');
-			if (this.plugin.settings.booksFolder) {
-				dropdownOptions.add(this.plugin.settings.booksFolder);
-			}
-			const sortedOptions = Array.from(dropdownOptions).sort((a, b) => a.localeCompare(b));
-
 			new Setting(containerEl)
 				.setName('Books folder')
 				.setDesc(
@@ -234,18 +215,16 @@ class DictionarySettingTab extends PluginSettingTab {
 						? `✓ Folder exists at "${booksFolderPath}". New book notes will be created here.`
 						: `"${booksFolderPath}" doesn't exist yet. Create it below or pick another folder.`
 				)
-				.addDropdown((drop) => {
-					for (const folder of sortedOptions) {
-						const exists = this.app.vault.getAbstractFileByPath(normalizePath(folder)) instanceof TFolder;
-						drop.addOption(folder, exists ? folder : `${folder} (will be created)`);
-					}
-					drop
-						.setValue(this.plugin.settings.booksFolder || 'Books')
+				.addText((text) => {
+					text
+						.setPlaceholder('Books')
+						.setValue(this.plugin.settings.booksFolder)
 						.onChange(async (value) => {
 							this.plugin.settings.booksFolder = value;
 							await this.plugin.saveSettings();
 							this.display();
 						});
+					new FolderSuggest(this.app, text.inputEl, ['Books']);
 				});
 
 			if (!folderExists) {

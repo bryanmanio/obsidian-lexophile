@@ -1,47 +1,27 @@
-import { AbstractInputSuggest, App, Modal, Notice, Setting } from 'obsidian';
+import { App, Modal, Notice, Setting } from 'obsidian';
 import { fileExists, readKoboWords, type KoboWord } from './kobo';
 import { lookupWord } from './dictionary';
-import { createWordNote } from './lexicon';
-import { bookNoteExists, cleanBookTitle, ensureBookStub, listBookNotes, titleCase } from './books';
+import { createWordNote, wordNoteExists } from './lexicon';
+import { bookNoteExists, cleanBookTitle, ensureBookStub, titleCase } from './books';
 import type { DictionarySettings } from './settings';
 
 const DEFAULT_KOBO_PATH = '/Volumes/KOBOeReader/.kobo/KoboReader.sqlite';
 const RATE_LIMIT_MS = 150;
 
-type State = 'path' | 'preview' | 'progress' | 'done';
+type State = 'path' | 'wordlist' | 'progress' | 'done';
+
+interface WordItem {
+	kobo: KoboWord;
+	bookName: string; // Title Case version of bookTitle, or '' for unknown
+	checked: boolean;
+	duplicate: boolean;
+}
 
 interface ImportSummary {
 	imported: number;
 	skipped: number;
-	notFound: number;
-	errors: number;
-}
-
-class BookSuggest extends AbstractInputSuggest<string> {
-	private books: string[];
-	private onPicked: (value: string) => void;
-
-	constructor(app: App, inputEl: HTMLInputElement, books: string[], onPicked: (value: string) => void) {
-		super(app, inputEl);
-		this.books = books;
-		this.onPicked = onPicked;
-	}
-
-	protected getSuggestions(query: string): string[] {
-		const q = query.trim().toLowerCase();
-		if (!q) return this.books.slice(0, 8);
-		return this.books.filter((b) => b.toLowerCase().includes(q)).slice(0, 8);
-	}
-
-	renderSuggestion(book: string, el: HTMLElement) {
-		el.setText(book);
-	}
-
-	selectSuggestion(book: string) {
-		this.setValue(book);
-		this.onPicked(book);
-		this.close();
-	}
+	notFound: string[]; // list of words not found in dictionary
+	errors: { word: string; reason: string }[];
 }
 
 export class KoboImportModal extends Modal {
@@ -54,14 +34,17 @@ export class KoboImportModal extends Modal {
 	private pathError = '';
 	private reading = false;
 
-	// Preview state — keyed by original Kobo title (or '__unknown__')
-	private bookGroups = new Map<string, KoboWord[]>();
-	private bookNameOverrides = new Map<string, string>();
+	// Word list state
+	private items: WordItem[] = [];
+	private searchQuery = '';
+	private listEl: HTMLElement | null = null;
+	private countEl: HTMLElement | null = null;
+	private importBtn: HTMLButtonElement | null = null;
 
 	// Progress state
 	private progressLine = '';
 	private progressEl: HTMLElement | null = null;
-	private summary: ImportSummary = { imported: 0, skipped: 0, notFound: 0, errors: 0 };
+	private summary: ImportSummary = { imported: 0, skipped: 0, notFound: [], errors: [] };
 	private cancelRequested = false;
 
 	constructor(app: App, getSettings: () => DictionarySettings) {
@@ -84,7 +67,7 @@ export class KoboImportModal extends Modal {
 	private render() {
 		this.contentEl.empty();
 		if (this.state === 'path') return this.renderPathState();
-		if (this.state === 'preview') return this.renderPreviewState();
+		if (this.state === 'wordlist') return this.renderWordListState();
 		if (this.state === 'progress') return this.renderProgressState();
 		this.renderDoneState();
 	}
@@ -146,20 +129,20 @@ export class KoboImportModal extends Modal {
 				return;
 			}
 
-			this.bookGroups = new Map();
-			this.bookNameOverrides = new Map();
-			for (const w of words) {
-				const key = w.bookTitle ?? '__unknown__';
-				if (!this.bookGroups.has(key)) {
-					this.bookGroups.set(key, []);
-					const initial = w.bookTitle ? titleCase(w.bookTitle) : '';
-					this.bookNameOverrides.set(key, initial);
-				}
-				this.bookGroups.get(key)!.push(w);
-			}
+			const settings = this.getSettings();
+			this.items = words.map((kobo) => {
+				const dup = wordNoteExists(this.app, settings, kobo.word);
+				return {
+					kobo,
+					bookName: kobo.bookTitle ? titleCase(kobo.bookTitle) : '',
+					checked: !dup,
+					duplicate: dup,
+				};
+			});
 
+			this.searchQuery = '';
 			this.reading = false;
-			this.state = 'preview';
+			this.state = 'wordlist';
 			this.render();
 		} catch (err) {
 			this.pathError = (err as Error).message;
@@ -168,74 +151,154 @@ export class KoboImportModal extends Modal {
 		}
 	}
 
-	// ── State 2: preview & per-book name resolution ────────────────
+	// ── State 2: word list with checkboxes ────────────────────────
 
-	private renderPreviewState() {
-		const settings = this.getSettings();
-		const totalWords = Array.from(this.bookGroups.values()).reduce((acc, arr) => acc + arr.length, 0);
-		const existingBooks = listBookNotes(this.app, settings.booksFolder);
+	private renderWordListState() {
+		const totalWords = this.items.length;
+		const dupCount = this.items.filter((i) => i.duplicate).length;
 
 		this.contentEl.createEl('h3', {
-			text: `${totalWords} word${totalWords === 1 ? '' : 's'} across ${this.bookGroups.size} book${this.bookGroups.size === 1 ? '' : 's'}`,
-		});
-		this.contentEl.createEl('p', {
-			text: 'Pick a name for each book. Existing notes in your books folder will autocomplete. Each word gets a [[wikilink]] back to whatever you choose.',
-			cls: 'setting-item-description',
+			text: `${totalWords} word${totalWords === 1 ? '' : 's'} found on your Kobo`,
 		});
 
-		const list = this.contentEl.createDiv();
-		list.style.cssText =
-			'max-height: 360px; overflow-y: auto; margin: 12px 0; border: 1px solid var(--background-modifier-border); border-radius: 6px;';
+		const desc = this.contentEl.createEl('p', { cls: 'setting-item-description' });
+		desc.appendText('Pick which words to import. ');
+		if (dupCount > 0) {
+			desc.appendText(`${dupCount} ${dupCount === 1 ? 'is' : 'are'} already in your lexicon and pre-unchecked. `);
+		}
+		desc.appendText('Sources will link to the book each word came from.');
 
-		// Sort books by word count, descending
-		const entries = Array.from(this.bookGroups.entries()).sort(
-			(a, b) => b[1].length - a[1].length
+		// Toolbar: search + select-all + count
+		const toolbar = this.contentEl.createDiv();
+		toolbar.style.cssText = 'display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;';
+
+		const searchEl = toolbar.createEl('input');
+		searchEl.type = 'text';
+		searchEl.placeholder = 'Search words…';
+		searchEl.style.cssText = 'flex: 1; padding: 6px 10px; font-size: 13px;';
+		searchEl.value = this.searchQuery;
+		searchEl.addEventListener('input', () => {
+			this.searchQuery = searchEl.value;
+			this.refreshList();
+		});
+
+		const allBtn = toolbar.createEl('button');
+		allBtn.textContent = 'Select all';
+		allBtn.addEventListener('click', () => {
+			const visible = this.visibleItems();
+			const allOn = visible.every((i) => i.checked);
+			for (const item of visible) item.checked = !allOn;
+			this.refreshList();
+		});
+
+		const noneBtn = toolbar.createEl('button');
+		noneBtn.textContent = 'Clear';
+		noneBtn.addEventListener('click', () => {
+			for (const item of this.visibleItems()) item.checked = false;
+			this.refreshList();
+		});
+
+		// List
+		this.listEl = this.contentEl.createDiv();
+		this.listEl.style.cssText =
+			'max-height: 380px; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px;';
+
+		this.refreshList();
+
+		// Footer
+		const footer = new Setting(this.contentEl);
+		footer.addButton((btn) =>
+			btn.setButtonText('Back').onClick(() => {
+				this.state = 'path';
+				this.render();
+			})
 		);
+		footer.addButton((btn) => {
+			this.importBtn = btn.buttonEl;
+			btn
+				.setButtonText('')
+				.setCta()
+				.onClick(() => void this.runImport());
+		});
 
-		for (const [key, words] of entries) {
-			const row = list.createDiv();
-			row.style.cssText =
-				'display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--background-modifier-border);';
+		this.updateImportButtonLabel();
+	}
 
-			const original = row.createDiv();
-			original.style.cssText =
-				'flex: 0 0 200px; color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-			original.textContent = key === '__unknown__' ? '(no title in Kobo)' : key;
-			original.title = original.textContent;
+	private visibleItems(): WordItem[] {
+		const q = this.searchQuery.trim().toLowerCase();
+		if (!q) return this.items;
+		return this.items.filter(
+			(i) =>
+				i.kobo.word.toLowerCase().includes(q) ||
+				i.bookName.toLowerCase().includes(q) ||
+				(i.kobo.bookTitle ?? '').toLowerCase().includes(q)
+		);
+	}
 
-			const inputEl = row.createEl('input');
-			inputEl.type = 'text';
-			inputEl.placeholder = 'Book name (or leave blank for no link)';
-			inputEl.style.cssText = 'flex: 1; padding: 6px 8px; font-size: 13px;';
-			inputEl.value = this.bookNameOverrides.get(key) ?? '';
-			inputEl.addEventListener('input', () => {
-				this.bookNameOverrides.set(key, inputEl.value);
-			});
+	private refreshList() {
+		if (!this.listEl) return;
+		this.listEl.empty();
 
-			new BookSuggest(this.app, inputEl, existingBooks, (picked) => {
-				inputEl.value = picked;
-				this.bookNameOverrides.set(key, picked);
-			});
+		const visible = this.visibleItems();
 
-			const count = row.createDiv();
-			count.style.cssText =
-				'flex: 0 0 70px; color: var(--text-muted); font-size: 12px; text-align: right;';
-			count.textContent = `${words.length} word${words.length === 1 ? '' : 's'}`;
+		if (visible.length === 0) {
+			const empty = this.listEl.createDiv();
+			empty.style.cssText = 'padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;';
+			empty.textContent = 'No words match.';
+			this.updateImportButtonLabel();
+			return;
 		}
 
-		new Setting(this.contentEl)
-			.addButton((btn) =>
-				btn.setButtonText('Back').onClick(() => {
-					this.state = 'path';
-					this.render();
-				})
-			)
-			.addButton((btn) =>
-				btn
-					.setButtonText(`Import ${totalWords} word${totalWords === 1 ? '' : 's'}`)
-					.setCta()
-					.onClick(() => void this.runImport())
-			);
+		for (const item of visible) {
+			const row = this.listEl.createDiv();
+			row.style.cssText =
+				'display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
+			row.addEventListener('click', (e) => {
+				if ((e.target as HTMLElement).tagName === 'INPUT') return;
+				item.checked = !item.checked;
+				this.refreshList();
+			});
+
+			const checkbox = row.createEl('input');
+			checkbox.type = 'checkbox';
+			checkbox.checked = item.checked;
+			checkbox.addEventListener('change', () => {
+				item.checked = checkbox.checked;
+				this.updateImportButtonLabel();
+			});
+
+			const word = row.createDiv();
+			word.style.cssText = 'flex: 1; font-size: 14px;';
+			word.textContent = item.kobo.word;
+			if (item.duplicate) {
+				word.style.color = 'var(--text-muted)';
+				word.style.textDecoration = 'line-through';
+			}
+
+			const book = row.createDiv();
+			book.style.cssText =
+				'flex: 0 0 220px; color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+			book.textContent = item.bookName || '(no book)';
+			book.title = item.bookName || '(no book)';
+
+			if (item.duplicate) {
+				const tag = row.createDiv();
+				tag.style.cssText =
+					'flex: 0 0 auto; font-size: 11px; padding: 2px 8px; background: var(--background-modifier-border); border-radius: 10px; color: var(--text-muted);';
+				tag.textContent = 'already saved';
+			}
+		}
+
+		this.updateImportButtonLabel();
+	}
+
+	private updateImportButtonLabel() {
+		if (!this.importBtn) return;
+		const selected = this.items.filter((i) => i.checked).length;
+		this.importBtn.textContent = selected > 0
+			? `Import ${selected} word${selected === 1 ? '' : 's'}`
+			: 'Import';
+		this.importBtn.disabled = selected === 0;
 	}
 
 	// ── State 3: progress ──────────────────────────────────────────
@@ -254,42 +317,44 @@ export class KoboImportModal extends Modal {
 	}
 
 	private async runImport() {
+		const queue = this.items.filter((i) => i.checked);
+		if (queue.length === 0) return;
+
 		this.state = 'progress';
-		this.summary = { imported: 0, skipped: 0, notFound: 0, errors: 0 };
+		this.summary = { imported: 0, skipped: 0, notFound: [], errors: [] };
 		this.cancelRequested = false;
 		this.render();
 
 		const settings = this.getSettings();
-		const existingLower = new Set(
-			listBookNotes(this.app, settings.booksFolder).map((s) => s.toLowerCase())
-		);
-
-		// Flatten words with their resolved book name
-		const queue: { kobo: KoboWord; bookName: string }[] = [];
-		for (const [key, words] of this.bookGroups.entries()) {
-			const bookName = cleanBookTitle((this.bookNameOverrides.get(key) ?? '').trim());
-			for (const w of words) queue.push({ kobo: w, bookName });
+		const existingBooks = new Set<string>();
+		// Pre-warm with names already in the books folder so we don't re-create stubs.
+		for (const item of queue) {
+			if (item.bookName && bookNoteExists(this.app, settings.booksFolder, item.bookName)) {
+				existingBooks.add(item.bookName.toLowerCase());
+			}
 		}
 
 		for (let i = 0; i < queue.length; i++) {
 			if (this.cancelRequested) break;
-			const { kobo, bookName } = queue[i];
+			const item = queue[i];
+			const word = item.kobo.word;
 
-			this.updateProgressLine(`Looking up "${kobo.word}" (${i + 1} of ${queue.length})…`);
+			this.updateProgressLine(`Looking up "${word}" (${i + 1} of ${queue.length})…`);
 
 			try {
-				const entry = await lookupWord(kobo.word);
+				const entry = await lookupWord(word);
+				const bookName = cleanBookTitle(item.bookName);
 
 				let source: string;
 				if (!bookName) {
 					source = 'kobo';
-				} else if (existingLower.has(bookName.toLowerCase())) {
+				} else if (existingBooks.has(bookName.toLowerCase())) {
 					source = `[[${bookName}]]`;
 				} else {
 					switch (settings.unmatchedBookHandling) {
 						case 'create':
 							await ensureBookStub(this.app, settings.booksFolder, bookName);
-							existingLower.add(bookName.toLowerCase());
+							existingBooks.add(bookName.toLowerCase());
 							source = `[[${bookName}]]`;
 							break;
 						case 'linkOnly':
@@ -308,14 +373,13 @@ export class KoboImportModal extends Modal {
 			} catch (err) {
 				const msg = (err as Error).message;
 				if (/no definition found/i.test(msg) || /empty response/i.test(msg)) {
-					this.summary.notFound++;
+					this.summary.notFound.push(word);
 				} else {
-					this.summary.errors++;
+					this.summary.errors.push({ word, reason: msg });
 				}
-				console.warn(`[Lexophile] "${kobo.word}":`, msg);
+				console.warn(`[Lexophile] "${word}":`, msg);
 			}
 
-			// Throttle to be kind to the API
 			if (i < queue.length - 1) {
 				await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
 			}
@@ -331,15 +395,30 @@ export class KoboImportModal extends Modal {
 		this.contentEl.createEl('h3', { text: this.cancelRequested ? 'Import cancelled' : 'Done' });
 
 		const { imported, skipped, notFound, errors } = this.summary;
-		const lines: string[] = [];
-		lines.push(`Imported ${imported} word${imported === 1 ? '' : 's'}`);
-		if (skipped) lines.push(`${skipped} skipped (already in lexicon)`);
-		if (notFound) lines.push(`${notFound} not found in dictionary`);
-		if (errors) lines.push(`${errors} error${errors === 1 ? '' : 's'} (see console)`);
 
-		const summaryEl = this.contentEl.createEl('p');
-		summaryEl.style.cssText = 'font-size: 14px; line-height: 1.6;';
-		summaryEl.innerHTML = lines.map((l) => `• ${l}`).join('<br>');
+		const totals = this.contentEl.createEl('p');
+		totals.style.cssText = 'font-size: 14px; line-height: 1.6;';
+		const totalLines: string[] = [];
+		totalLines.push(`✓ Imported ${imported} word${imported === 1 ? '' : 's'}`);
+		if (skipped) totalLines.push(`${skipped} already in your lexicon (skipped)`);
+		totals.innerHTML = totalLines.map((l) => `• ${l}`).join('<br>');
+
+		if (notFound.length > 0) {
+			this.renderWordListSection(
+				`${notFound.length} not found in the dictionary`,
+				notFound,
+				'These weren\'t in api.dictionaryapi.dev. They might be names, slang, or compounds.'
+			);
+		}
+
+		if (errors.length > 0) {
+			const errorList = errors.map((e) => `${e.word} — ${e.reason}`);
+			this.renderWordListSection(
+				`${errors.length} error${errors.length === 1 ? '' : 's'}`,
+				errorList,
+				'Likely network issues. Try the import again later.'
+			);
+		}
 
 		new Setting(this.contentEl).addButton((btn) =>
 			btn.setButtonText('Close').setCta().onClick(() => this.close())
@@ -348,5 +427,39 @@ export class KoboImportModal extends Modal {
 		if (imported > 0) {
 			new Notice(`Lexophile: imported ${imported} word${imported === 1 ? '' : 's'} from Kobo.`);
 		}
+	}
+
+	private renderWordListSection(title: string, words: string[], hint: string) {
+		const wrap = this.contentEl.createDiv();
+		wrap.style.cssText = 'margin-top: 16px;';
+
+		const heading = wrap.createEl('h4', { text: title });
+		heading.style.cssText = 'margin: 0 0 4px; font-size: 13px; font-weight: 600;';
+
+		const hintEl = wrap.createEl('p', { text: hint, cls: 'setting-item-description' });
+		hintEl.style.cssText = 'margin: 0 0 8px;';
+
+		const list = wrap.createDiv();
+		list.style.cssText =
+			'max-height: 160px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: var(--font-monospace, monospace);';
+		for (const word of words) {
+			const row = list.createDiv();
+			row.style.cssText = 'padding: 2px 0;';
+			row.textContent = word;
+		}
+
+		const copyBtn = wrap.createEl('button');
+		copyBtn.textContent = 'Copy list';
+		copyBtn.style.cssText = 'margin-top: 8px;';
+		copyBtn.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(words.join('\n'));
+				const original = copyBtn.textContent;
+				copyBtn.textContent = 'Copied!';
+				setTimeout(() => (copyBtn.textContent = original), 1500);
+			} catch {
+				new Notice('Could not copy to clipboard.');
+			}
+		});
 	}
 }
