@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="chrome-extension/icons/icon128.png" alt="Lexophile" width="96" height="96" />
+  <img src="https://raw.githubusercontent.com/bryanmanio/lexophile-chrome-extension/main/icons/icon128.png" alt="Lexophile" width="96" height="96" />
 
-  # Lexophile
+  # Lexophile — Personal Dictionary
 
   **Build your vocabulary one word at a time.**
 
-  An Obsidian plugin and Chrome extension that turn any word you read into a permanent, searchable dictionary note in your vault.
+  An Obsidian plugin that turns any word you read into a permanent, searchable dictionary note in your vault.
 
   [Install](#installation) · [How it works](#how-it-works) · [Privacy](#privacy) · [Support](#support)
 </div>
@@ -14,32 +14,23 @@
 
 ## What it does
 
-You're reading something on the web — an article, a book on your Kobo, anything — and you hit a word you want to remember. With Lexophile you can:
-
-- **Right-click on the web** → "Add *<word>* to Lexophile" → a definition note appears in your Obsidian vault.
-- **Inside Obsidian** → run `Lexophile: Add word to lexicon` from the command palette and paste the word.
+- **Right-click on the web** → "Add *<word>* to Lexophile" → a definition note appears in your Obsidian vault. *(Requires the [Chrome extension](https://github.com/bryanmanio/lexophile-chrome-extension).)*
+- **Inside Obsidian** → run `Lexophile: Add word to lexicon` from the command palette and type or paste the word.
 - **Plug in your Kobo** → import every word you saved from "My Words" in one shot, with each word linked back to the book it came from.
 
-Every word becomes a note in `Dictionary/` with the part of speech, definition, example sentence, and a clickable source link. A Bases view auto-generates so you can see your whole vocabulary in one table.
+Every word becomes a note in your `Dictionary/` folder with the part of speech, definition, example sentence, and a clickable source link. A Bases view auto-generates so you can see your whole vocabulary in one table.
 
 ## Features
 
-- 📖 **One-click capture** from the web via Chrome extension
+- 📖 **One-click capture** from the web via the companion [Chrome extension](https://github.com/bryanmanio/lexophile-chrome-extension)
 - ✍️ **Manual entry** from inside Obsidian
 - 📱 **Kobo import** — pull "My Words" from `KoboReader.sqlite` and link each word back to its book
-- 🗂️ **Auto-generated Bases view** of your full lexicon, with display columns (Word, Word class, Definition, Example, Source, Date added)
-- 🔗 **Books library integration** — Kobo imports become `[[wikilinks]]` to book notes you (or the plugin) create
+- 🗂️ **Auto-generated Bases view** of your full lexicon (Word, Word class, Definition, Example, Source, Date added)
+- 🔗 **Books library integration** — Kobo imports become `[[wikilinks]]` to book notes
 - 🔒 **Local-only** — your words never leave your machine except for the dictionary lookup itself
 - 🎨 **Customizable note template** with frontmatter properties for everything
 
 ## How it works
-
-Lexophile has two halves:
-
-| Component | What it is | What it does |
-|---|---|---|
-| **Obsidian plugin** | Runs inside Obsidian | Listens on `localhost:27124`, looks up definitions, writes notes, manages the Bases view, handles Kobo import |
-| **Chrome extension** | Manifest V3 service worker | Adds the right-click menu, fetches the definition, posts it to the local plugin |
 
 The Chrome extension and the plugin authenticate to each other with a shared secret token (auto-generated during onboarding) so random websites can't write to your vault.
 
@@ -62,29 +53,20 @@ The Chrome extension and the plugin authenticate to each other with a shared sec
 
 ## Installation
 
-Lexophile isn't in the Obsidian community store yet. Install both components manually.
+### From the Obsidian community store *(coming soon)*
 
-### Obsidian plugin
+Search for **Lexophile** in **Settings → Community plugins → Browse**.
 
-1. Clone or download this repo.
-2. Build the plugin:
-   ```bash
-   cd obsidian-plugin
-   npm install
-   npm run build
-   ```
-3. Copy the built files into your vault:
-   ```bash
-   cp main.js manifest.json /path/to/vault/.obsidian/plugins/lexophile/
-   ```
-4. In Obsidian, **Settings → Community plugins** → toggle **Lexophile - Personal Dictionary** on.
+### Manual install
+
+1. Download `main.js`, `manifest.json`, and `versions.json` from the [latest release](https://github.com/bryanmanio/obsidian-lexophile/releases/latest).
+2. Create the folder `<vault>/.obsidian/plugins/lexophile/`.
+3. Copy the three files into that folder.
+4. In Obsidian: **Settings → Community plugins** → toggle **Lexophile - Personal Dictionary** on.
 
 ### Chrome extension
 
-1. In Chrome, open `chrome://extensions`.
-2. Toggle **Developer mode** on.
-3. Click **Load unpacked** and select the `chrome-extension/` folder from this repo.
-4. Pin the extension to your toolbar.
+Install the companion extension from the [lexophile-chrome-extension](https://github.com/bryanmanio/lexophile-chrome-extension) repo.
 
 ## Setup
 
@@ -132,16 +114,14 @@ Everything runs on your machine. The only network call is to the [Free Dictionar
 ## Development
 
 ```bash
-# Plugin (TypeScript + esbuild)
-cd obsidian-plugin
 npm install
 npm run dev      # watch mode
 npm run build    # production bundle
-
-# Chrome extension — no build step, just load unpacked.
 ```
 
 The plugin bundles [sql.js](https://github.com/sql-js/sql.js) (used by the Kobo import) which is why `main.js` is ~1 MB.
+
+For the Chrome extension, see [lexophile-chrome-extension](https://github.com/bryanmanio/lexophile-chrome-extension) — no build step, just load unpacked.
 
 ## Support
 
