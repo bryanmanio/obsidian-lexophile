@@ -159,6 +159,18 @@ class DictionarySettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Create stubs for unknown words')
+			.setDesc(
+				'When the dictionary has no entry for a word (a name, slang, technical term), save a stub note with empty fields instead of failing. You can fill in the definition later.'
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.stubUnfoundWords).onChange(async (value) => {
+					this.plugin.settings.stubUnfoundWords = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
 			.setName('Automatically create dictionary base')
 			.setDesc('Create a Bases file in the dictionary folder that lists every word in a table view.')
 			.addToggle((toggle) =>

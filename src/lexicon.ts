@@ -18,6 +18,20 @@ export interface NoteResult {
 	action: 'created' | 'skipped' | 'appended' | 'overwritten';
 }
 
+// Build a placeholder entry for a word the dictionary API doesn't recognize.
+// All fields except `word` and `source` are empty; the template's
+// stripEmptyLabelLines pass cleans the body so the note is still tidy.
+export function createStubEntry(word: string, source = ''): WordEntry {
+	return {
+		word: word.trim(),
+		partOfSpeech: '',
+		definition: '',
+		example: '',
+		phonetic: '',
+		source,
+	};
+}
+
 // Derives the on-disk path a given word would be written to, given the
 // dictionary folder + naming convention. Used by the importer to detect
 // duplicates without invoking the full create pipeline.

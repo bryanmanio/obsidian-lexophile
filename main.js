@@ -2511,6 +2511,16 @@ function candidateForms(word) {
 }
 
 // src/lexicon.ts
+function createStubEntry(word, source = "") {
+  return {
+    word: word.trim(),
+    partOfSpeech: "",
+    definition: "",
+    example: "",
+    phonetic: "",
+    source
+  };
+}
 function wordNotePath(settings, word) {
   let filename = word.trim();
   if (settings.namingConvention === "lowercase") {
@@ -2730,25 +2740,32 @@ var import_obsidian5 = require("obsidian");
 // src/dictionary.ts
 var import_obsidian4 = require("obsidian");
 var API_BASE = "https://api.dictionaryapi.dev/api/v2/entries/en/";
+var WordNotFoundError = class extends Error {
+  constructor(word) {
+    super(`No definition found for "${word}".`);
+    this.word = word;
+    this.name = "WordNotFoundError";
+  }
+};
 async function lookupWord(word) {
   var _a, _b, _c, _d, _e, _f, _g;
   const url = API_BASE + encodeURIComponent(word.trim());
   const res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
   if (res.status === 404) {
-    throw new Error(`No definition found for "${word}".`);
+    throw new WordNotFoundError(word);
   }
   if (res.status !== 200) {
     throw new Error(`Dictionary API returned status ${res.status}.`);
   }
   const data = res.json;
   if (!Array.isArray(data) || data.length === 0) {
-    throw new Error(`Empty response for "${word}".`);
+    throw new WordNotFoundError(word);
   }
   const first = data[0];
   const meaning = (_a = first.meanings) == null ? void 0 : _a[0];
   const definition = (_b = meaning == null ? void 0 : meaning.definitions) == null ? void 0 : _b[0];
   if (!meaning || !definition) {
-    throw new Error(`No definition data for "${word}".`);
+    throw new WordNotFoundError(word);
   }
   const phonetic = (_f = (_e = first.phonetic) != null ? _e : (_d = (_c = first.phonetics) == null ? void 0 : _c.find((p) => p.text)) == null ? void 0 : _d.text) != null ? _f : "";
   return {
@@ -2808,11 +2825,24 @@ var AddWordModal = class extends import_obsidian5.Modal {
       this.submitBtn.disabled = true;
       this.submitBtn.textContent = "Looking up\u2026";
     }
+    const settings = this.getSettings();
     try {
-      const entry = await lookupWord(word);
+      let entry;
+      let stubbed = false;
+      try {
+        entry = await lookupWord(word);
+      } catch (err) {
+        if (err instanceof WordNotFoundError && settings.stubUnfoundWords) {
+          entry = createStubEntry(word);
+          stubbed = true;
+        } else {
+          throw err;
+        }
+      }
       entry.source = "manual";
-      const result = await createWordNote(this.app, this.getSettings(), entry);
-      new import_obsidian5.Notice(`Lexophile: ${result.action} "${entry.word}"`);
+      const result = await createWordNote(this.app, settings, entry);
+      const label = stubbed ? `stub saved for "${entry.word}"` : `${result.action} "${entry.word}"`;
+      new import_obsidian5.Notice(`Lexophile: ${label}`);
       this.close();
     } catch (err) {
       new import_obsidian5.Notice(`Lexophile: ${err.message}`);
@@ -3004,10 +3034,13 @@ var KoboImportModal = class extends import_obsidian7.Modal {
     this.listEl = null;
     this.countEl = null;
     this.importBtn = null;
+    // Per-import override of settings.stubUnfoundWords. Initialized from
+    // settings in renderWordListState so each new import picks up the latest.
+    this.stubUnfound = false;
     // Progress state
     this.progressLine = "";
     this.progressEl = null;
-    this.summary = { imported: 0, skipped: 0, notFound: [], errors: [] };
+    this.summary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
     this.cancelRequested = false;
     this.getSettings = getSettings;
   }
@@ -3081,6 +3114,7 @@ var KoboImportModal = class extends import_obsidian7.Modal {
       });
       this.searchQuery = "";
       this.reading = false;
+      this.stubUnfound = settings.stubUnfoundWords;
       this.state = "wordlist";
       this.render();
     } catch (err) {
@@ -3102,6 +3136,22 @@ var KoboImportModal = class extends import_obsidian7.Modal {
       desc.appendText(`${dupCount} ${dupCount === 1 ? "is" : "are"} already in your lexicon and pre-unchecked. `);
     }
     desc.appendText("Sources will link to the book each word came from.");
+    const stubOpt = this.contentEl.createDiv();
+    stubOpt.style.cssText = "display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;";
+    const stubCheckbox = stubOpt.createEl("input");
+    stubCheckbox.type = "checkbox";
+    stubCheckbox.id = "lex-kobo-stub";
+    stubCheckbox.checked = this.stubUnfound;
+    stubCheckbox.addEventListener("change", () => {
+      this.stubUnfound = stubCheckbox.checked;
+    });
+    const stubLabel = stubOpt.createEl("label");
+    stubLabel.htmlFor = "lex-kobo-stub";
+    stubLabel.style.cssText = "cursor: pointer; flex: 1;";
+    stubLabel.appendText("Create stub notes for words not found in the dictionary");
+    const stubHint = stubOpt.createEl("span");
+    stubHint.style.cssText = "color: var(--text-muted); font-size: 12px;";
+    stubHint.textContent = "(names, slang, technical terms)";
     const toolbar = this.contentEl.createDiv();
     toolbar.style.cssText = "display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;";
     const searchEl = toolbar.createEl("input");
@@ -3229,7 +3279,7 @@ var KoboImportModal = class extends import_obsidian7.Modal {
     if (queue.length === 0)
       return;
     this.state = "progress";
-    this.summary = { imported: 0, skipped: 0, notFound: [], errors: [] };
+    this.summary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
     this.cancelRequested = false;
     this.render();
     const settings = this.getSettings();
@@ -3245,43 +3295,42 @@ var KoboImportModal = class extends import_obsidian7.Modal {
       const item = queue[i];
       const word = item.kobo.word;
       this.updateProgressLine(`Looking up "${word}" (${i + 1} of ${queue.length})\u2026`);
+      const source = await this.resolveSource(item, settings, existingBooks);
+      let entry;
+      let stubbed = false;
       try {
-        const entry = await lookupWord(word);
-        const bookName = cleanBookTitle(item.bookName);
-        let source;
-        if (!bookName) {
-          source = "kobo";
-        } else if (existingBooks.has(bookName.toLowerCase())) {
-          source = `[[${bookName}]]`;
-        } else {
-          switch (settings.unmatchedBookHandling) {
-            case "create":
-              await ensureBookStub(this.app, settings.booksFolder, bookName);
-              existingBooks.add(bookName.toLowerCase());
-              source = `[[${bookName}]]`;
-              break;
-            case "linkOnly":
-              source = `[[${bookName}]]`;
-              break;
-            case "plainText":
-              source = `Kobo: ${bookName}`;
-              break;
+        entry = await lookupWord(word);
+      } catch (err) {
+        if (err instanceof WordNotFoundError) {
+          if (this.stubUnfound) {
+            entry = createStubEntry(word);
+            stubbed = true;
+          } else {
+            this.summary.notFound.push({ word, source });
+            console.warn(`[Lexophile] "${word}": not found`);
+            if (i < queue.length - 1)
+              await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+            continue;
           }
+        } else {
+          this.summary.errors.push({ word, reason: err.message });
+          console.warn(`[Lexophile] "${word}":`, err.message);
+          if (i < queue.length - 1)
+            await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+          continue;
         }
-        entry.source = source;
+      }
+      entry.source = source;
+      try {
         const result = await createWordNote(this.app, settings, entry);
         if (result.action === "skipped")
           this.summary.skipped++;
+        else if (stubbed)
+          this.summary.stubbed++;
         else
           this.summary.imported++;
       } catch (err) {
-        const msg = err.message;
-        if (/no definition found/i.test(msg) || /empty response/i.test(msg)) {
-          this.summary.notFound.push(word);
-        } else {
-          this.summary.errors.push({ word, reason: msg });
-        }
-        console.warn(`[Lexophile] "${word}":`, msg);
+        this.summary.errors.push({ word, reason: err.message });
       }
       if (i < queue.length - 1) {
         await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
@@ -3290,23 +3339,51 @@ var KoboImportModal = class extends import_obsidian7.Modal {
     this.state = "done";
     this.render();
   }
+  // Resolves the source frontmatter value for an item, creating a book stub
+  // if needed per settings.unmatchedBookHandling. Mutates `existingBooks` to
+  // remember any stubs it creates.
+  async resolveSource(item, settings, existingBooks) {
+    const bookName = cleanBookTitle(item.bookName);
+    if (!bookName)
+      return "kobo";
+    if (existingBooks.has(bookName.toLowerCase()))
+      return `[[${bookName}]]`;
+    switch (settings.unmatchedBookHandling) {
+      case "create":
+        await ensureBookStub(this.app, settings.booksFolder, bookName);
+        existingBooks.add(bookName.toLowerCase());
+        return `[[${bookName}]]`;
+      case "linkOnly":
+        return `[[${bookName}]]`;
+      case "plainText":
+        return `Kobo: ${bookName}`;
+    }
+  }
   // ── State 4: done ──────────────────────────────────────────────
   renderDoneState() {
     this.contentEl.createEl("h3", { text: this.cancelRequested ? "Import cancelled" : "Done" });
-    const { imported, skipped, notFound, errors } = this.summary;
+    const { imported, skipped, stubbed, notFound, errors } = this.summary;
     const totals = this.contentEl.createEl("p");
     totals.style.cssText = "font-size: 14px; line-height: 1.6;";
     const totalLines = [];
     totalLines.push(`\u2713 Imported ${imported} word${imported === 1 ? "" : "s"}`);
+    if (stubbed)
+      totalLines.push(`\u270E Created ${stubbed} stub${stubbed === 1 ? "" : "s"} for unknown words`);
     if (skipped)
       totalLines.push(`${skipped} already in your lexicon (skipped)`);
     totals.innerHTML = totalLines.map((l) => `\u2022 ${l}`).join("<br>");
     if (notFound.length > 0) {
+      const words = notFound.map((n) => n.word);
       this.renderWordListSection(
         `${notFound.length} not found in the dictionary`,
-        notFound,
+        words,
         "These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
       );
+      const stubBtnWrap = this.contentEl.createDiv();
+      stubBtnWrap.style.cssText = "margin-top: 8px;";
+      const stubBtn = stubBtnWrap.createEl("button");
+      stubBtn.textContent = `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? "" : "s"}`;
+      stubBtn.addEventListener("click", () => void this.stubNotFound(stubBtn));
     }
     if (errors.length > 0) {
       const errorList = errors.map((e) => `${e.word} \u2014 ${e.reason}`);
@@ -3319,9 +3396,41 @@ var KoboImportModal = class extends import_obsidian7.Modal {
     new import_obsidian7.Setting(this.contentEl).addButton(
       (btn) => btn.setButtonText("Close").setCta().onClick(() => this.close())
     );
-    if (imported > 0) {
-      new import_obsidian7.Notice(`Lexophile: imported ${imported} word${imported === 1 ? "" : "s"} from Kobo.`);
+    if (imported > 0 || stubbed > 0) {
+      const parts = [];
+      if (imported > 0)
+        parts.push(`imported ${imported}`);
+      if (stubbed > 0)
+        parts.push(`stubbed ${stubbed}`);
+      new import_obsidian7.Notice(`Lexophile: ${parts.join(", ")} word${imported + stubbed === 1 ? "" : "s"} from Kobo.`);
     }
+  }
+  // Retroactively turn each not-found word into a stub note. Sources were
+  // captured during the original import, so we can reuse them verbatim.
+  async stubNotFound(triggerBtn) {
+    const pending = this.summary.notFound.slice();
+    if (pending.length === 0)
+      return;
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = "Creating stubs\u2026";
+    const settings = this.getSettings();
+    let created = 0;
+    const stillFailed = [];
+    for (const item of pending) {
+      try {
+        const entry = createStubEntry(item.word, item.source);
+        const result = await createWordNote(this.app, settings, entry);
+        if (result.action !== "skipped")
+          created++;
+      } catch (err) {
+        stillFailed.push(item);
+        console.warn(`[Lexophile] stub "${item.word}":`, err.message);
+      }
+    }
+    this.summary.stubbed += created;
+    this.summary.notFound = stillFailed;
+    new import_obsidian7.Notice(`Lexophile: created ${created} stub${created === 1 ? "" : "s"}.`);
+    this.render();
   }
   renderWordListSection(title, words, hint) {
     const wrap = this.contentEl.createDiv();
@@ -3415,6 +3524,7 @@ var DEFAULT_SETTINGS = {
   duplicateHandling: "skip",
   autoCreateBase: true,
   baseName: "_Dictionary List",
+  stubUnfoundWords: false,
   enableKoboImport: false,
   booksFolder: "Books",
   unmatchedBookHandling: "create"
@@ -3520,6 +3630,14 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
     new import_obsidian9.Setting(containerEl).setName("Duplicate handling").setDesc("What to do when a note for the word already exists.").addDropdown(
       (drop) => drop.addOption("skip", "Skip \u2014 keep existing note").addOption("append", "Append new definition").addOption("overwrite", "Overwrite").setValue(this.plugin.settings.duplicateHandling).onChange(async (value) => {
         this.plugin.settings.duplicateHandling = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian9.Setting(containerEl).setName("Create stubs for unknown words").setDesc(
+      "When the dictionary has no entry for a word (a name, slang, technical term), save a stub note with empty fields instead of failing. You can fill in the definition later."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.stubUnfoundWords).onChange(async (value) => {
+        this.plugin.settings.stubUnfoundWords = value;
         await this.plugin.saveSettings();
       })
     );

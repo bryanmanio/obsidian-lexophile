@@ -3,6 +3,16 @@ import type { WordEntry } from './lexicon';
 
 const API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
 
+// Distinguishes "the dictionary API has no entry for this word" from genuine
+// errors (network, 5xx, malformed response). Callers can use this to decide
+// whether to fall back to a stub note.
+export class WordNotFoundError extends Error {
+	constructor(public readonly word: string) {
+		super(`No definition found for "${word}".`);
+		this.name = 'WordNotFoundError';
+	}
+}
+
 interface ApiPhonetic {
 	text?: string;
 	audio?: string;
@@ -30,7 +40,7 @@ export async function lookupWord(word: string): Promise<WordEntry> {
 	const res = await requestUrl({ url, method: 'GET', throw: false });
 
 	if (res.status === 404) {
-		throw new Error(`No definition found for "${word}".`);
+		throw new WordNotFoundError(word);
 	}
 	if (res.status !== 200) {
 		throw new Error(`Dictionary API returned status ${res.status}.`);
@@ -38,7 +48,7 @@ export async function lookupWord(word: string): Promise<WordEntry> {
 
 	const data = res.json as ApiEntry[];
 	if (!Array.isArray(data) || data.length === 0) {
-		throw new Error(`Empty response for "${word}".`);
+		throw new WordNotFoundError(word);
 	}
 
 	const first = data[0];
@@ -46,7 +56,7 @@ export async function lookupWord(word: string): Promise<WordEntry> {
 	const definition = meaning?.definitions?.[0];
 
 	if (!meaning || !definition) {
-		throw new Error(`No definition data for "${word}".`);
+		throw new WordNotFoundError(word);
 	}
 
 	const phonetic = first.phonetic ?? first.phonetics?.find((p) => p.text)?.text ?? '';
