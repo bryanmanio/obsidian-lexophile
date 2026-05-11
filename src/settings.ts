@@ -14,7 +14,6 @@ export interface DictionarySettings {
 	baseName: string;
 	stubUnfoundWords: boolean;
 	dictionarySource: DictionarySource;
-	dictionaryUrl: string;
 	enableKoboImport: boolean;
 	booksFolder: string;
 	unmatchedBookHandling: UnmatchedBookHandling;
@@ -47,7 +46,6 @@ export const DEFAULT_SETTINGS: DictionarySettings = {
 	baseName: '_Dictionary List',
 	stubUnfoundWords: false,
 	dictionarySource: 'api',
-	dictionaryUrl: 'https://github.com/bryanmanio/obsidian-lexophile/releases/download/dictionary-v1/dictionary.sqlite',
 	enableKoboImport: false,
 	booksFolder: 'Books',
 	unmatchedBookHandling: 'create',

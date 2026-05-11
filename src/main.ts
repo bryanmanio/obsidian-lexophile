@@ -1,6 +1,6 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFolder, normalizePath } from 'obsidian';
 import { DictionaryServer } from './server';
-import { DictionaryStore } from './dictionaryStore';
+import { DEFAULT_DICTIONARY_URL, DictionaryStore } from './dictionaryStore';
 import { AddWordModal } from './wordModal';
 import { KoboImportModal } from './koboImportModal';
 import { MassImportModal } from './massImportModal';
@@ -136,15 +136,13 @@ class DictionarySettingTab extends PluginSettingTab {
 
 		// ── Dictionary source ────────────────────────────────────────
 
-		containerEl.createEl('h3', { text: 'Dictionary source' });
-
 		new Setting(containerEl)
-			.setName('Where to look up definitions')
-			.setDesc('Online uses the Free Dictionary API. Local downloads a one-time 23MB SQLite and works offline thereafter.')
+			.setName('Dictionary source')
+			.setDesc('Online uses the free Dictionary API. Local downloads ~23MB once and works offline.')
 			.addDropdown((drop) =>
 				drop
 					.addOption('api', 'Online (Free Dictionary API)')
-					.addOption('local', 'Local SQLite (offline)')
+					.addOption('local', 'Local (offline)')
 					.setValue(this.plugin.settings.dictionarySource)
 					.onChange(async (value) => {
 						this.plugin.settings.dictionarySource = value as DictionarySettings['dictionarySource'];
@@ -153,40 +151,20 @@ class DictionarySettingTab extends PluginSettingTab {
 					})
 			);
 
-		if (this.plugin.settings.dictionarySource === 'api') {
-			const apiNote = containerEl.createEl('p', { cls: 'setting-item-description' });
-			apiNote.appendText('Lookups go to ');
-			apiNote.createEl('code', { text: 'api.dictionaryapi.dev' });
-			apiNote.appendText('. Free public API, occasionally rate-limited — switch to Local for an offline mode.');
-		} else {
-			const dictIntro = containerEl.createEl('p', { cls: 'setting-item-description' });
-			dictIntro.appendText(
-				'Local SQLite (~23MB, ~167K English entries from Wiktionary via '
-			);
-			dictIntro.createEl('a', {
+		if (this.plugin.settings.dictionarySource === 'local') {
+			const dictStatus = containerEl.createDiv();
+			dictStatus.style.cssText =
+				'padding: 10px 12px; margin: 4px 0 8px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+			this.renderDictionaryStatus(dictStatus);
+
+			const credit = containerEl.createEl('p', { cls: 'setting-item-description' });
+			credit.style.cssText = 'margin-bottom: 18px;';
+			credit.appendText('Data: ~167K English entries from Wiktionary via ');
+			credit.createEl('a', {
 				text: 'MattDodsonEnglish/english-dictionary',
 				href: 'https://github.com/MattDodsonEnglish/english-dictionary',
 			});
-			dictIntro.appendText('). Downloads once on first use — no network calls during normal use after that.');
-
-			const dictStatus = containerEl.createDiv();
-			dictStatus.style.cssText =
-				'padding: 10px 12px; margin: 4px 0 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
-			this.renderDictionaryStatus(dictStatus);
-
-			new Setting(containerEl)
-				.setName('Dictionary download URL')
-				.setDesc('Where the dictionary SQLite is downloaded from. Override only if mirroring or using a custom build.')
-				.addText((text) => {
-					text
-						.setPlaceholder('https://…/dictionary.sqlite')
-						.setValue(this.plugin.settings.dictionaryUrl)
-						.onChange(async (value) => {
-							this.plugin.settings.dictionaryUrl = value;
-							await this.plugin.saveSettings();
-						});
-					text.inputEl.style.cssText = 'width: 100%; font-family: monospace; font-size: 12px;';
-				});
+			credit.appendText('.');
 		}
 
 		// ── Note creation ────────────────────────────────────────────
@@ -484,15 +462,10 @@ class DictionarySettingTab extends PluginSettingTab {
 		btn.textContent = status.ready ? 'Re-download' : 'Download';
 		if (status.ready) btn.style.background = 'transparent';
 		btn.addEventListener('click', async () => {
-			const url = this.plugin.settings.dictionaryUrl;
-			if (!url) {
-				new Notice('Lexophile: set a Dictionary download URL first.');
-				return;
-			}
 			btn.disabled = true;
 			btn.textContent = 'Downloading…';
 			try {
-				await this.plugin.store.download(url);
+				await this.plugin.store.download(DEFAULT_DICTIONARY_URL);
 				new Notice('Lexophile: dictionary downloaded and loaded.');
 			} catch (err) {
 				new Notice(`Lexophile: download failed — ${(err as Error).message}`);

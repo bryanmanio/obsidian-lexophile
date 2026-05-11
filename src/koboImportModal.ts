@@ -478,7 +478,7 @@ export class KoboImportModal extends Modal {
 			this.renderWordListSection(
 				`${notFound.length} not found in the dictionary`,
 				words,
-				"These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
+				"These words weren't found in the dictionary. They might be names, slang, compounds, or don't exist in the online dictionary we pull from."
 			);
 
 			const stubBtnWrap = this.contentEl.createDiv();

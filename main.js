@@ -2754,6 +2754,7 @@ function getSqlJs() {
 
 // src/dictionaryStore.ts
 var DB_FILENAME = "dictionary.sqlite";
+var DEFAULT_DICTIONARY_URL = "https://github.com/bryanmanio/obsidian-lexophile/releases/download/dictionary-v1/dictionary.sqlite";
 var DictionaryNotReadyError = class extends Error {
   constructor() {
     super("Local dictionary not loaded. Download it from Settings \u2192 Lexophile.");
@@ -3540,7 +3541,7 @@ var KoboImportModal = class extends import_obsidian8.Modal {
       this.renderWordListSection(
         `${notFound.length} not found in the dictionary`,
         words,
-        "These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
+        "These words weren't found in the dictionary. They might be names, slang, compounds, or don't exist in the online dictionary we pull from."
       );
       const stubBtnWrap = this.contentEl.createDiv();
       stubBtnWrap.style.cssText = "margin-top: 8px;";
@@ -3948,7 +3949,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
       this.renderWordListSection(
         `${notFound.length} not found in the dictionary`,
         notFound,
-        "These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
+        "These words weren't found in the dictionary. They might be names, slang, compounds, or don't exist in the online dictionary we pull from."
       );
       const stubBtnWrap = this.contentEl.createDiv();
       stubBtnWrap.style.cssText = "margin-top: 8px;";
@@ -4095,7 +4096,6 @@ var DEFAULT_SETTINGS = {
   baseName: "_Dictionary List",
   stubUnfoundWords: false,
   dictionarySource: "api",
-  dictionaryUrl: "https://github.com/bryanmanio/obsidian-lexophile/releases/download/dictionary-v1/dictionary.sqlite",
   enableKoboImport: false,
   booksFolder: "Books",
   unmatchedBookHandling: "create"
@@ -4201,39 +4201,25 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
     fromBrowser.appendText("From the web: install the Lexophile Chrome extension, highlight a word, right-click, and choose ");
     fromBrowser.createEl("strong", { text: 'Add "<word>" to Lexophile' });
     fromBrowser.appendText(".");
-    containerEl.createEl("h3", { text: "Dictionary source" });
-    new import_obsidian11.Setting(containerEl).setName("Where to look up definitions").setDesc("Online uses the Free Dictionary API. Local downloads a one-time 23MB SQLite and works offline thereafter.").addDropdown(
-      (drop) => drop.addOption("api", "Online (Free Dictionary API)").addOption("local", "Local SQLite (offline)").setValue(this.plugin.settings.dictionarySource).onChange(async (value) => {
+    new import_obsidian11.Setting(containerEl).setName("Dictionary source").setDesc("Online uses the free Dictionary API. Local downloads ~23MB once and works offline.").addDropdown(
+      (drop) => drop.addOption("api", "Online (Free Dictionary API)").addOption("local", "Local (offline)").setValue(this.plugin.settings.dictionarySource).onChange(async (value) => {
         this.plugin.settings.dictionarySource = value;
         await this.plugin.saveSettings();
         this.display();
       })
     );
-    if (this.plugin.settings.dictionarySource === "api") {
-      const apiNote = containerEl.createEl("p", { cls: "setting-item-description" });
-      apiNote.appendText("Lookups go to ");
-      apiNote.createEl("code", { text: "api.dictionaryapi.dev" });
-      apiNote.appendText(". Free public API, occasionally rate-limited \u2014 switch to Local for an offline mode.");
-    } else {
-      const dictIntro = containerEl.createEl("p", { cls: "setting-item-description" });
-      dictIntro.appendText(
-        "Local SQLite (~23MB, ~167K English entries from Wiktionary via "
-      );
-      dictIntro.createEl("a", {
+    if (this.plugin.settings.dictionarySource === "local") {
+      const dictStatus = containerEl.createDiv();
+      dictStatus.style.cssText = "padding: 10px 12px; margin: 4px 0 8px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;";
+      this.renderDictionaryStatus(dictStatus);
+      const credit = containerEl.createEl("p", { cls: "setting-item-description" });
+      credit.style.cssText = "margin-bottom: 18px;";
+      credit.appendText("Data: ~167K English entries from Wiktionary via ");
+      credit.createEl("a", {
         text: "MattDodsonEnglish/english-dictionary",
         href: "https://github.com/MattDodsonEnglish/english-dictionary"
       });
-      dictIntro.appendText("). Downloads once on first use \u2014 no network calls during normal use after that.");
-      const dictStatus = containerEl.createDiv();
-      dictStatus.style.cssText = "padding: 10px 12px; margin: 4px 0 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;";
-      this.renderDictionaryStatus(dictStatus);
-      new import_obsidian11.Setting(containerEl).setName("Dictionary download URL").setDesc("Where the dictionary SQLite is downloaded from. Override only if mirroring or using a custom build.").addText((text) => {
-        text.setPlaceholder("https://\u2026/dictionary.sqlite").setValue(this.plugin.settings.dictionaryUrl).onChange(async (value) => {
-          this.plugin.settings.dictionaryUrl = value;
-          await this.plugin.saveSettings();
-        });
-        text.inputEl.style.cssText = "width: 100%; font-family: monospace; font-size: 12px;";
-      });
+      credit.appendText(".");
     }
     new import_obsidian11.Setting(containerEl).setName("Dictionary folder").setDesc("Folder where new notes will be created. Created automatically if it does not exist.").addText(
       (text) => text.setPlaceholder("Dictionary").setValue(this.plugin.settings.folder).onChange(async (value) => {
@@ -4421,15 +4407,10 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
     if (status.ready)
       btn.style.background = "transparent";
     btn.addEventListener("click", async () => {
-      const url = this.plugin.settings.dictionaryUrl;
-      if (!url) {
-        new import_obsidian11.Notice("Lexophile: set a Dictionary download URL first.");
-        return;
-      }
       btn.disabled = true;
       btn.textContent = "Downloading\u2026";
       try {
-        await this.plugin.store.download(url);
+        await this.plugin.store.download(DEFAULT_DICTIONARY_URL);
         new import_obsidian11.Notice("Lexophile: dictionary downloaded and loaded.");
       } catch (err) {
         new import_obsidian11.Notice(`Lexophile: download failed \u2014 ${err.message}`);
