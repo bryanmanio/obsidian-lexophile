@@ -22,6 +22,7 @@ date-added: {{date}}
 source: "{{source}}"
 word-class: "{{partOfSpeech}}"
 definition: "{{definition}}"
+familiarity: {{familiarity}}
 ---
 
 # {{word}}

@@ -20,6 +20,8 @@ properties:
     displayName: Word
   word-class:
     displayName: Word class
+  familiarity:
+    displayName: Familiarity
   date-added:
     displayName: Date added
 views:
@@ -29,6 +31,7 @@ views:
       - file.name
       - word-class
       - definition
+      - familiarity
       - source
       - date-added
 `;

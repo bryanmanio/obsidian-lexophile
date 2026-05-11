@@ -1,5 +1,6 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import { ensureDictionaryBase } from './base';
+import { classifyFamiliarity } from './familiarity';
 import type { DictionarySettings } from './settings';
 
 export interface WordEntry {
@@ -105,6 +106,7 @@ function renderEntry(
 		phonetic: entry.phonetic ?? '',
 		date: today,
 		source: entry.source ?? '',
+		familiarity: classifyFamiliarity(entry.word),
 	};
 
 	const template = settings.template;
