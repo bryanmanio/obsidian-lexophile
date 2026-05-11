@@ -1,12 +1,12 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { lookupWord, WordNotFoundError } from './dictionary';
+import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import type { DictionarySettings } from './settings';
 
-// Spacing between consecutive lookups. dictionaryapi.dev is a free public API
-// with an undocumented rate limit; ~3 req/s is safe in practice. lookupWord()
-// itself handles transient 429s by backing off and retrying.
-const RATE_LIMIT_MS = 350;
+// Local SQLite lookups are sub-millisecond, but we still yield to the event
+// loop between iterations so the progress line can repaint.
+const YIELD_MS = 0;
 
 type State = 'input' | 'wordlist' | 'progress' | 'done';
 
@@ -63,9 +63,12 @@ export class MassImportModal extends Modal {
 	private summary: ImportSummary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
 	private cancelRequested = false;
 
-	constructor(app: App, getSettings: () => DictionarySettings) {
+	private store: DictionaryStore;
+
+	constructor(app: App, getSettings: () => DictionarySettings, store: DictionaryStore) {
 		super(app);
 		this.getSettings = getSettings;
+		this.store = store;
 	}
 
 	onOpen() {
@@ -137,6 +140,11 @@ export class MassImportModal extends Modal {
 
 	private parseInput() {
 		this.inputError = '';
+		if (!this.store.isReady()) {
+			this.inputError = 'Local dictionary not loaded. Download it from Settings → Lexophile first.';
+			this.render();
+			return;
+		}
 		const words = parseWordList(this.rawInput);
 		if (words.length === 0) {
 			this.inputError = 'No words detected. Paste a comma- or newline-separated list above.';
@@ -337,7 +345,7 @@ export class MassImportModal extends Modal {
 			let entry: WordEntry;
 			let stubbed = false;
 			try {
-				entry = await lookupWord(word);
+				entry = await lookupWord(this.store, word);
 			} catch (err) {
 				if (err instanceof WordNotFoundError) {
 					if (this.stubUnfound) {
@@ -345,12 +353,12 @@ export class MassImportModal extends Modal {
 						stubbed = true;
 					} else {
 						this.summary.notFound.push(word);
-						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
-					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
 					continue;
 				}
 			}
@@ -365,7 +373,7 @@ export class MassImportModal extends Modal {
 				this.summary.errors.push({ word, reason: (err as Error).message });
 			}
 
-			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
 		}
 
 		this.state = 'done';

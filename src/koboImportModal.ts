@@ -1,15 +1,15 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { fileExists, readKoboWords, type KoboWord } from './kobo';
 import { lookupWord, WordNotFoundError } from './dictionary';
+import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import { bookNoteExists, cleanBookTitle, ensureBookStub, titleCase } from './books';
 import type { DictionarySettings } from './settings';
 
 const DEFAULT_KOBO_PATH = '/Volumes/KOBOeReader/.kobo/KoboReader.sqlite';
-// Spacing between consecutive lookups. dictionaryapi.dev is a free public API
-// with an undocumented rate limit; ~3 req/s is safe in practice. lookupWord()
-// itself handles transient 429s by backing off and retrying.
-const RATE_LIMIT_MS = 350;
+// Local SQLite lookups are sub-millisecond, but we still yield to the event
+// loop between iterations so the progress line can repaint.
+const YIELD_MS = 0;
 
 type State = 'path' | 'wordlist' | 'progress' | 'done';
 
@@ -63,9 +63,12 @@ export class KoboImportModal extends Modal {
 	private summary: ImportSummary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
 	private cancelRequested = false;
 
-	constructor(app: App, getSettings: () => DictionarySettings) {
+	private store: DictionaryStore;
+
+	constructor(app: App, getSettings: () => DictionarySettings, store: DictionaryStore) {
 		super(app);
 		this.getSettings = getSettings;
+		this.store = store;
 	}
 
 	onOpen() {
@@ -131,6 +134,9 @@ export class KoboImportModal extends Modal {
 		this.render();
 
 		try {
+			if (!this.store.isReady()) {
+				throw new Error('Local dictionary not loaded. Download it from Settings → Lexophile first.');
+			}
 			const path = this.filePath.trim();
 			if (!path) throw new Error('Please enter a path.');
 			if (!(await fileExists(path))) {
@@ -386,7 +392,7 @@ export class KoboImportModal extends Modal {
 			let entry: WordEntry;
 			let stubbed = false;
 			try {
-				entry = await lookupWord(word);
+				entry = await lookupWord(this.store, word);
 			} catch (err) {
 				if (err instanceof WordNotFoundError) {
 					if (this.stubUnfound) {
@@ -395,13 +401,13 @@ export class KoboImportModal extends Modal {
 					} else {
 						this.summary.notFound.push({ word, source });
 						console.warn(`[Lexophile] "${word}": not found`);
-						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
 					console.warn(`[Lexophile] "${word}":`, (err as Error).message);
-					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
 					continue;
 				}
 			}
@@ -417,7 +423,7 @@ export class KoboImportModal extends Modal {
 			}
 
 			if (i < queue.length - 1) {
-				await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+				await new Promise((r) => setTimeout(r, YIELD_MS));
 			}
 		}
 

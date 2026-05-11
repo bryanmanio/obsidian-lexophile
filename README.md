@@ -32,24 +32,25 @@ Every word becomes a note in your `Dictionary/` folder with the part of speech, 
 
 ## How it works
 
-The Chrome extension and the plugin authenticate to each other with a shared secret token (auto-generated during onboarding) so random websites can't write to your vault.
+The plugin ships with a **local SQLite dictionary** (~23MB, ~167K entries). Lookups happen entirely offline — the dictionary file downloads once on first use, then everything stays on your machine.
 
 ```
-┌──────────────┐     definition     ┌────────────────┐
-│   Chrome     │ ←─────────────────  │  Free          │
-│  extension   │                     │  Dictionary    │
-└──────┬───────┘                     │  API           │
-       │                             └────────────────┘
-       │ POST /word
-       │ Bearer <token>
-       ▼
-┌──────────────────────────────┐
-│   Obsidian plugin            │
-│   (HTTP server on :27124)    │
-│                              │
-│   creates note in vault →    │  →  📓 Dictionary/serendipity.md
-└──────────────────────────────┘
+┌──────────────┐    POST /word    ┌────────────────────────────────┐
+│   Chrome     │ ───────────────► │   Obsidian plugin              │
+│  extension   │   Bearer <tok>   │   (HTTP server on :27124)      │
+└──────────────┘                  │                                │
+                                  │   ┌──────────────────────┐     │
+                                  │   │ dictionary.sqlite    │     │
+   Mass-import / Kobo / manual ►──┼──►│ (167K entries, local)│     │
+                                  │   └──────────────────────┘     │
+                                  │                                │
+                                  │   creates note in vault →      │  →  📓 Dictionary/serendipity.md
+                                  └────────────────────────────────┘
 ```
+
+Dictionary data is derived from [MattDodsonEnglish/english-dictionary](https://github.com/MattDodsonEnglish/english-dictionary) (CC BY-SA 3.0, originally from Wiktionary via dictionaryapi.dev). The Chrome extension still calls dictionaryapi.dev for its own lookups; the plugin itself makes no network calls during normal use.
+
+The Chrome extension and the plugin authenticate to each other with a shared secret token (auto-generated during onboarding) so random websites can't write to your vault.
 
 ## Installation
 
@@ -70,7 +71,8 @@ Install the companion extension from the [lexophile-chrome-extension](https://gi
 
 ## Setup
 
-After installing, the Chrome extension opens a welcome tab. It auto-generates an API token; copy it and paste it into **Obsidian → Settings → Lexophile → API token**, then click the welcome page's **Test connection** button. Once it goes green, you're done.
+1. Open **Settings → Lexophile → Local dictionary** and click **Download**. The plugin fetches ~23MB once and stores it inside your vault's plugin folder. The "Ready" pill confirms it loaded.
+2. *(Optional, for web capture)* The Chrome extension opens a welcome tab on install. It auto-generates an API token; copy it and paste it into **Settings → Lexophile → API token**, then click **Test connection**.
 
 ## Usage
 
@@ -109,7 +111,9 @@ Every imported word gets `source: "[[Book Name]]"` in its frontmatter. If the bo
 
 ## Privacy
 
-Everything runs on your machine. The only network call is to the [Free Dictionary API](https://dictionaryapi.dev/) (`api.dictionaryapi.dev`) to fetch the actual definition for a word. No analytics, no telemetry, no account, no cloud.
+The plugin is fully local after the initial dictionary download. No analytics, no telemetry, no account, no cloud. The only network call after setup is when you click **Re-download** in settings.
+
+The Chrome extension does call [dictionaryapi.dev](https://dictionaryapi.dev/) when you right-click to capture a word — that's outside the plugin and only happens when you use the extension.
 
 ## Development
 
