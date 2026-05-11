@@ -11,6 +11,7 @@ export interface DictionarySettings {
 	duplicateHandling: DuplicateHandling;
 	autoCreateBase: boolean;
 	baseName: string;
+	stubUnfoundWords: boolean;
 	enableKoboImport: boolean;
 	booksFolder: string;
 	unmatchedBookHandling: UnmatchedBookHandling;
@@ -41,6 +42,7 @@ export const DEFAULT_SETTINGS: DictionarySettings = {
 	duplicateHandling: 'skip',
 	autoCreateBase: true,
 	baseName: '_Dictionary List',
+	stubUnfoundWords: false,
 	enableKoboImport: false,
 	booksFolder: 'Books',
 	unmatchedBookHandling: 'create',

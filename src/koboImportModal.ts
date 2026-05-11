@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { fileExists, readKoboWords, type KoboWord } from './kobo';
-import { lookupWord } from './dictionary';
-import { createWordNote, wordNoteExists } from './lexicon';
+import { lookupWord, WordNotFoundError } from './dictionary';
+import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import { bookNoteExists, cleanBookTitle, ensureBookStub, titleCase } from './books';
 import type { DictionarySettings } from './settings';
 
@@ -17,10 +17,19 @@ interface WordItem {
 	duplicate: boolean;
 }
 
+// Captures enough context to retroactively turn a not-found word into a stub
+// note on the done screen — we already resolved its book source during import,
+// so we don't need to recompute it.
+interface NotFoundItem {
+	word: string;
+	source: string;
+}
+
 interface ImportSummary {
 	imported: number;
 	skipped: number;
-	notFound: string[]; // list of words not found in dictionary
+	stubbed: number;
+	notFound: NotFoundItem[];
 	errors: { word: string; reason: string }[];
 }
 
@@ -41,10 +50,14 @@ export class KoboImportModal extends Modal {
 	private countEl: HTMLElement | null = null;
 	private importBtn: HTMLButtonElement | null = null;
 
+	// Per-import override of settings.stubUnfoundWords. Initialized from
+	// settings in renderWordListState so each new import picks up the latest.
+	private stubUnfound = false;
+
 	// Progress state
 	private progressLine = '';
 	private progressEl: HTMLElement | null = null;
-	private summary: ImportSummary = { imported: 0, skipped: 0, notFound: [], errors: [] };
+	private summary: ImportSummary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
 	private cancelRequested = false;
 
 	constructor(app: App, getSettings: () => DictionarySettings) {
@@ -142,6 +155,7 @@ export class KoboImportModal extends Modal {
 
 			this.searchQuery = '';
 			this.reading = false;
+			this.stubUnfound = settings.stubUnfoundWords;
 			this.state = 'wordlist';
 			this.render();
 		} catch (err) {
@@ -167,6 +181,24 @@ export class KoboImportModal extends Modal {
 			desc.appendText(`${dupCount} ${dupCount === 1 ? 'is' : 'are'} already in your lexicon and pre-unchecked. `);
 		}
 		desc.appendText('Sources will link to the book each word came from.');
+
+		const stubOpt = this.contentEl.createDiv();
+		stubOpt.style.cssText =
+			'display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+		const stubCheckbox = stubOpt.createEl('input');
+		stubCheckbox.type = 'checkbox';
+		stubCheckbox.id = 'lex-kobo-stub';
+		stubCheckbox.checked = this.stubUnfound;
+		stubCheckbox.addEventListener('change', () => {
+			this.stubUnfound = stubCheckbox.checked;
+		});
+		const stubLabel = stubOpt.createEl('label');
+		stubLabel.htmlFor = 'lex-kobo-stub';
+		stubLabel.style.cssText = 'cursor: pointer; flex: 1;';
+		stubLabel.appendText('Create stub notes for words not found in the dictionary');
+		const stubHint = stubOpt.createEl('span');
+		stubHint.style.cssText = 'color: var(--text-muted); font-size: 12px;';
+		stubHint.textContent = '(names, slang, technical terms)';
 
 		// Toolbar: search + select-all + count
 		const toolbar = this.contentEl.createDiv();
@@ -326,7 +358,7 @@ export class KoboImportModal extends Modal {
 		if (queue.length === 0) return;
 
 		this.state = 'progress';
-		this.summary = { imported: 0, skipped: 0, notFound: [], errors: [] };
+		this.summary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
 		this.cancelRequested = false;
 		this.render();
 
@@ -346,43 +378,39 @@ export class KoboImportModal extends Modal {
 
 			this.updateProgressLine(`Looking up "${word}" (${i + 1} of ${queue.length})…`);
 
+			const source = await this.resolveSource(item, settings, existingBooks);
+
+			let entry: WordEntry;
+			let stubbed = false;
 			try {
-				const entry = await lookupWord(word);
-				const bookName = cleanBookTitle(item.bookName);
-
-				let source: string;
-				if (!bookName) {
-					source = 'kobo';
-				} else if (existingBooks.has(bookName.toLowerCase())) {
-					source = `[[${bookName}]]`;
-				} else {
-					switch (settings.unmatchedBookHandling) {
-						case 'create':
-							await ensureBookStub(this.app, settings.booksFolder, bookName);
-							existingBooks.add(bookName.toLowerCase());
-							source = `[[${bookName}]]`;
-							break;
-						case 'linkOnly':
-							source = `[[${bookName}]]`;
-							break;
-						case 'plainText':
-							source = `Kobo: ${bookName}`;
-							break;
+				entry = await lookupWord(word);
+			} catch (err) {
+				if (err instanceof WordNotFoundError) {
+					if (this.stubUnfound) {
+						entry = createStubEntry(word);
+						stubbed = true;
+					} else {
+						this.summary.notFound.push({ word, source });
+						console.warn(`[Lexophile] "${word}": not found`);
+						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+						continue;
 					}
+				} else {
+					this.summary.errors.push({ word, reason: (err as Error).message });
+					console.warn(`[Lexophile] "${word}":`, (err as Error).message);
+					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+					continue;
 				}
+			}
 
-				entry.source = source;
+			entry.source = source;
+			try {
 				const result = await createWordNote(this.app, settings, entry);
 				if (result.action === 'skipped') this.summary.skipped++;
+				else if (stubbed) this.summary.stubbed++;
 				else this.summary.imported++;
 			} catch (err) {
-				const msg = (err as Error).message;
-				if (/no definition found/i.test(msg) || /empty response/i.test(msg)) {
-					this.summary.notFound.push(word);
-				} else {
-					this.summary.errors.push({ word, reason: msg });
-				}
-				console.warn(`[Lexophile] "${word}":`, msg);
+				this.summary.errors.push({ word, reason: (err as Error).message });
 			}
 
 			if (i < queue.length - 1) {
@@ -394,26 +422,58 @@ export class KoboImportModal extends Modal {
 		this.render();
 	}
 
+	// Resolves the source frontmatter value for an item, creating a book stub
+	// if needed per settings.unmatchedBookHandling. Mutates `existingBooks` to
+	// remember any stubs it creates.
+	private async resolveSource(
+		item: WordItem,
+		settings: DictionarySettings,
+		existingBooks: Set<string>
+	): Promise<string> {
+		const bookName = cleanBookTitle(item.bookName);
+		if (!bookName) return 'kobo';
+		if (existingBooks.has(bookName.toLowerCase())) return `[[${bookName}]]`;
+
+		switch (settings.unmatchedBookHandling) {
+			case 'create':
+				await ensureBookStub(this.app, settings.booksFolder, bookName);
+				existingBooks.add(bookName.toLowerCase());
+				return `[[${bookName}]]`;
+			case 'linkOnly':
+				return `[[${bookName}]]`;
+			case 'plainText':
+				return `Kobo: ${bookName}`;
+		}
+	}
+
 	// ── State 4: done ──────────────────────────────────────────────
 
 	private renderDoneState() {
 		this.contentEl.createEl('h3', { text: this.cancelRequested ? 'Import cancelled' : 'Done' });
 
-		const { imported, skipped, notFound, errors } = this.summary;
+		const { imported, skipped, stubbed, notFound, errors } = this.summary;
 
 		const totals = this.contentEl.createEl('p');
 		totals.style.cssText = 'font-size: 14px; line-height: 1.6;';
 		const totalLines: string[] = [];
 		totalLines.push(`✓ Imported ${imported} word${imported === 1 ? '' : 's'}`);
+		if (stubbed) totalLines.push(`✎ Created ${stubbed} stub${stubbed === 1 ? '' : 's'} for unknown words`);
 		if (skipped) totalLines.push(`${skipped} already in your lexicon (skipped)`);
 		totals.innerHTML = totalLines.map((l) => `• ${l}`).join('<br>');
 
 		if (notFound.length > 0) {
+			const words = notFound.map((n) => n.word);
 			this.renderWordListSection(
 				`${notFound.length} not found in the dictionary`,
-				notFound,
-				'These weren\'t in api.dictionaryapi.dev. They might be names, slang, or compounds.'
+				words,
+				"These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
 			);
+
+			const stubBtnWrap = this.contentEl.createDiv();
+			stubBtnWrap.style.cssText = 'margin-top: 8px;';
+			const stubBtn = stubBtnWrap.createEl('button');
+			stubBtn.textContent = `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? '' : 's'}`;
+			stubBtn.addEventListener('click', () => void this.stubNotFound(stubBtn));
 		}
 
 		if (errors.length > 0) {
@@ -429,9 +489,42 @@ export class KoboImportModal extends Modal {
 			btn.setButtonText('Close').setCta().onClick(() => this.close())
 		);
 
-		if (imported > 0) {
-			new Notice(`Lexophile: imported ${imported} word${imported === 1 ? '' : 's'} from Kobo.`);
+		if (imported > 0 || stubbed > 0) {
+			const parts: string[] = [];
+			if (imported > 0) parts.push(`imported ${imported}`);
+			if (stubbed > 0) parts.push(`stubbed ${stubbed}`);
+			new Notice(`Lexophile: ${parts.join(', ')} word${imported + stubbed === 1 ? '' : 's'} from Kobo.`);
 		}
+	}
+
+	// Retroactively turn each not-found word into a stub note. Sources were
+	// captured during the original import, so we can reuse them verbatim.
+	private async stubNotFound(triggerBtn: HTMLButtonElement) {
+		const pending = this.summary.notFound.slice();
+		if (pending.length === 0) return;
+
+		triggerBtn.disabled = true;
+		triggerBtn.textContent = 'Creating stubs…';
+
+		const settings = this.getSettings();
+		let created = 0;
+		const stillFailed: NotFoundItem[] = [];
+
+		for (const item of pending) {
+			try {
+				const entry = createStubEntry(item.word, item.source);
+				const result = await createWordNote(this.app, settings, entry);
+				if (result.action !== 'skipped') created++;
+			} catch (err) {
+				stillFailed.push(item);
+				console.warn(`[Lexophile] stub "${item.word}":`, (err as Error).message);
+			}
+		}
+
+		this.summary.stubbed += created;
+		this.summary.notFound = stillFailed;
+		new Notice(`Lexophile: created ${created} stub${created === 1 ? '' : 's'}.`);
+		this.render();
 	}
 
 	private renderWordListSection(title: string, words: string[], hint: string) {

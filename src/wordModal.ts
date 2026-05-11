@@ -1,6 +1,6 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
-import { lookupWord } from './dictionary';
-import { createWordNote } from './lexicon';
+import { lookupWord, WordNotFoundError } from './dictionary';
+import { createStubEntry, createWordNote } from './lexicon';
 import type { DictionarySettings } from './settings';
 
 export class AddWordModal extends Modal {
@@ -62,11 +62,24 @@ export class AddWordModal extends Modal {
 			this.submitBtn.textContent = 'Looking up…';
 		}
 
+		const settings = this.getSettings();
 		try {
-			const entry = await lookupWord(word);
+			let entry;
+			let stubbed = false;
+			try {
+				entry = await lookupWord(word);
+			} catch (err) {
+				if (err instanceof WordNotFoundError && settings.stubUnfoundWords) {
+					entry = createStubEntry(word);
+					stubbed = true;
+				} else {
+					throw err;
+				}
+			}
 			entry.source = 'manual';
-			const result = await createWordNote(this.app, this.getSettings(), entry);
-			new Notice(`Lexophile: ${result.action} "${entry.word}"`);
+			const result = await createWordNote(this.app, settings, entry);
+			const label = stubbed ? `stub saved for "${entry.word}"` : `${result.action} "${entry.word}"`;
+			new Notice(`Lexophile: ${label}`);
 			this.close();
 		} catch (err) {
 			new Notice(`Lexophile: ${(err as Error).message}`);
