@@ -3,7 +3,10 @@ import { lookupWord, WordNotFoundError } from './dictionary';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import type { DictionarySettings } from './settings';
 
-const RATE_LIMIT_MS = 150;
+// Spacing between consecutive lookups. dictionaryapi.dev is a free public API
+// with an undocumented rate limit; ~3 req/s is safe in practice. lookupWord()
+// itself handles transient 429s by backing off and retrying.
+const RATE_LIMIT_MS = 350;
 
 type State = 'input' | 'wordlist' | 'progress' | 'done';
 

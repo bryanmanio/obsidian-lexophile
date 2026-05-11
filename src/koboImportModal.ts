@@ -6,7 +6,10 @@ import { bookNoteExists, cleanBookTitle, ensureBookStub, titleCase } from './boo
 import type { DictionarySettings } from './settings';
 
 const DEFAULT_KOBO_PATH = '/Volumes/KOBOeReader/.kobo/KoboReader.sqlite';
-const RATE_LIMIT_MS = 150;
+// Spacing between consecutive lookups. dictionaryapi.dev is a free public API
+// with an undocumented rate limit; ~3 req/s is safe in practice. lookupWord()
+// itself handles transient 429s by backing off and retrying.
+const RATE_LIMIT_MS = 350;
 
 type State = 'path' | 'wordlist' | 'progress' | 'done';
 

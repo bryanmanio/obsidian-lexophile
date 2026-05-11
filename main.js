@@ -2747,12 +2747,24 @@ var WordNotFoundError = class extends Error {
     this.name = "WordNotFoundError";
   }
 };
+var MAX_RETRIES = 4;
+var BASE_BACKOFF_MS = 1500;
 async function lookupWord(word) {
   var _a, _b, _c, _d, _e, _f, _g;
   const url = API_BASE + encodeURIComponent(word.trim());
-  const res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
+  let res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
+  let attempt = 0;
+  while ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+    const delay = BASE_BACKOFF_MS * Math.pow(2, attempt);
+    await new Promise((r) => setTimeout(r, delay));
+    attempt++;
+    res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
+  }
   if (res.status === 404) {
     throw new WordNotFoundError(word);
+  }
+  if (res.status === 429) {
+    throw new Error(`Rate-limited by Dictionary API after ${attempt} retries. Try a smaller batch or wait a minute.`);
   }
   if (res.status !== 200) {
     throw new Error(`Dictionary API returned status ${res.status}.`);
@@ -3019,7 +3031,7 @@ date-added: ${today}
 
 // src/koboImportModal.ts
 var DEFAULT_KOBO_PATH = "/Volumes/KOBOeReader/.kobo/KoboReader.sqlite";
-var RATE_LIMIT_MS = 150;
+var RATE_LIMIT_MS = 350;
 var KoboImportModal = class extends import_obsidian7.Modal {
   constructor(app, getSettings) {
     super(app);
@@ -3464,7 +3476,7 @@ var KoboImportModal = class extends import_obsidian7.Modal {
 
 // src/massImportModal.ts
 var import_obsidian8 = require("obsidian");
-var RATE_LIMIT_MS2 = 150;
+var RATE_LIMIT_MS2 = 350;
 function parseWordList(raw) {
   const tokens = raw.split(/[\s,;]+/).map((t) => t.replace(/^[^\p{L}'-]+|[^\p{L}'-]+$/gu, ""));
   const seen = /* @__PURE__ */ new Set();
