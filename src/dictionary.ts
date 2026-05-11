@@ -35,12 +35,30 @@ interface ApiEntry {
 	meanings: ApiMeaning[];
 }
 
+// dictionaryapi.dev returns 429 (Too Many Requests) and occasionally 503 under
+// load. Both are transient — back off and retry. Other non-200 statuses
+// (besides 404, which is handled separately as "word not found") are surfaced
+// to the caller.
+const MAX_RETRIES = 4;
+const BASE_BACKOFF_MS = 1500;
+
 export async function lookupWord(word: string): Promise<WordEntry> {
 	const url = API_BASE + encodeURIComponent(word.trim());
-	const res = await requestUrl({ url, method: 'GET', throw: false });
+
+	let res = await requestUrl({ url, method: 'GET', throw: false });
+	let attempt = 0;
+	while ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+		const delay = BASE_BACKOFF_MS * Math.pow(2, attempt);
+		await new Promise((r) => setTimeout(r, delay));
+		attempt++;
+		res = await requestUrl({ url, method: 'GET', throw: false });
+	}
 
 	if (res.status === 404) {
 		throw new WordNotFoundError(word);
+	}
+	if (res.status === 429) {
+		throw new Error(`Rate-limited by Dictionary API after ${attempt} retries. Try a smaller batch or wait a minute.`);
 	}
 	if (res.status !== 200) {
 		throw new Error(`Dictionary API returned status ${res.status}.`);

@@ -1,61 +1,61 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
-import { fileExists, readKoboWords, type KoboWord } from './kobo';
 import { lookupWord, WordNotFoundError } from './dictionary';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
-import { bookNoteExists, cleanBookTitle, ensureBookStub, titleCase } from './books';
 import type { DictionarySettings } from './settings';
 
-const DEFAULT_KOBO_PATH = '/Volumes/KOBOeReader/.kobo/KoboReader.sqlite';
 // Spacing between consecutive lookups. dictionaryapi.dev is a free public API
 // with an undocumented rate limit; ~3 req/s is safe in practice. lookupWord()
 // itself handles transient 429s by backing off and retrying.
 const RATE_LIMIT_MS = 350;
 
-type State = 'path' | 'wordlist' | 'progress' | 'done';
+type State = 'input' | 'wordlist' | 'progress' | 'done';
 
 interface WordItem {
-	kobo: KoboWord;
-	bookName: string; // Title Case version of bookTitle, or '' for unknown
+	word: string;
 	checked: boolean;
 	duplicate: boolean;
-}
-
-// Captures enough context to retroactively turn a not-found word into a stub
-// note on the done screen — we already resolved its book source during import,
-// so we don't need to recompute it.
-interface NotFoundItem {
-	word: string;
-	source: string;
 }
 
 interface ImportSummary {
 	imported: number;
 	skipped: number;
 	stubbed: number;
-	notFound: NotFoundItem[];
+	notFound: string[];
 	errors: { word: string; reason: string }[];
 }
 
-export class KoboImportModal extends Modal {
+// Accepts a free-form blob and pulls out plausible word tokens. Splits on
+// commas, semicolons, and any whitespace (newlines, tabs, spaces), then strips
+// surrounding punctuation and dedupes case-insensitively while preserving the
+// first-seen casing.
+export function parseWordList(raw: string): string[] {
+	const tokens = raw.split(/[\s,;]+/).map((t) => t.replace(/^[^\p{L}'-]+|[^\p{L}'-]+$/gu, ''));
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const t of tokens) {
+		if (!t) continue;
+		const key = t.toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(t);
+	}
+	return out;
+}
+
+export class MassImportModal extends Modal {
 	private getSettings: () => DictionarySettings;
+	private state: State = 'input';
 
-	private state: State = 'path';
-
-	// Path state
-	private filePath = DEFAULT_KOBO_PATH;
-	private pathError = '';
-	private reading = false;
+	// Input state
+	private rawInput = '';
+	private stubUnfound = false;
+	private inputError = '';
 
 	// Word list state
 	private items: WordItem[] = [];
 	private searchQuery = '';
 	private listEl: HTMLElement | null = null;
-	private countEl: HTMLElement | null = null;
 	private importBtn: HTMLButtonElement | null = null;
-
-	// Per-import override of settings.stubUnfoundWords. Initialized from
-	// settings in renderWordListState so each new import picks up the latest.
-	private stubUnfound = false;
 
 	// Progress state
 	private progressLine = '';
@@ -70,6 +70,7 @@ export class KoboImportModal extends Modal {
 
 	onOpen() {
 		this.modalEl.style.maxWidth = '720px';
+		this.stubUnfound = this.getSettings().stubUnfoundWords;
 		this.render();
 	}
 
@@ -78,132 +79,110 @@ export class KoboImportModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	// ── Render dispatch ─────────────────────────────────────────────
-
 	private render() {
 		this.contentEl.empty();
-		if (this.state === 'path') return this.renderPathState();
+		if (this.state === 'input') return this.renderInputState();
 		if (this.state === 'wordlist') return this.renderWordListState();
 		if (this.state === 'progress') return this.renderProgressState();
 		this.renderDoneState();
 	}
 
-	// ── State 1: pick the SQLite file ──────────────────────────────
+	// ── State 1: paste a list ──────────────────────────────────────
 
-	private renderPathState() {
-		this.contentEl.createEl('h3', { text: 'Import words from Kobo' });
+	private renderInputState() {
+		this.contentEl.createEl('h3', { text: 'Mass-import words' });
 		this.contentEl.createEl('p', {
-			text: "Plug in your Kobo eReader, then point Lexophile at its database file. The default works on macOS when the device is mounted.",
+			text: 'Paste a list of words below. Separate them with commas, spaces, or new lines — Lexophile will figure it out.',
 			cls: 'setting-item-description',
 		});
 
-		new Setting(this.contentEl)
-			.setName('Database path')
-			.addText((text) => {
-				text
-					.setPlaceholder(DEFAULT_KOBO_PATH)
-					.setValue(this.filePath)
-					.onChange((v) => (this.filePath = v));
-				text.inputEl.style.fontFamily = 'monospace';
-				text.inputEl.style.fontSize = '12px';
-			});
+		const textarea = this.contentEl.createEl('textarea');
+		textarea.rows = 10;
+		textarea.placeholder = 'serendipity, ephemeral, perspicacious\ngossamer\nalacrity';
+		textarea.style.cssText =
+			'width: 100%; font-family: var(--font-monospace, monospace); font-size: 13px; padding: 10px; margin-bottom: 8px; resize: vertical;';
+		textarea.value = this.rawInput;
+		textarea.addEventListener('input', () => (this.rawInput = textarea.value));
 
-		if (this.pathError) {
+		if (this.inputError) {
 			const err = this.contentEl.createEl('p');
 			err.style.cssText = 'color: var(--text-error); font-size: 13px; margin-top: 4px;';
-			err.textContent = this.pathError;
+			err.textContent = this.inputError;
 		}
+
+		const stubOpt = this.contentEl.createDiv();
+		stubOpt.style.cssText =
+			'display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+		const cb = stubOpt.createEl('input');
+		cb.type = 'checkbox';
+		cb.id = 'lex-mass-stub';
+		cb.checked = this.stubUnfound;
+		cb.addEventListener('change', () => (this.stubUnfound = cb.checked));
+		const label = stubOpt.createEl('label');
+		label.htmlFor = 'lex-mass-stub';
+		label.style.cssText = 'cursor: pointer; flex: 1;';
+		label.appendText('Create stub notes for words not found in the dictionary');
 
 		new Setting(this.contentEl)
 			.addButton((btn) => btn.setButtonText('Cancel').onClick(() => this.close()))
 			.addButton((btn) =>
 				btn
-					.setButtonText(this.reading ? 'Reading…' : 'Read words')
+					.setButtonText('Parse list')
 					.setCta()
-					.setDisabled(this.reading)
-					.onClick(() => void this.readWords())
+					.onClick(() => this.parseInput())
 			);
+
+		window.setTimeout(() => textarea.focus(), 0);
 	}
 
-	private async readWords() {
-		this.pathError = '';
-		this.reading = true;
-		this.render();
-
-		try {
-			const path = this.filePath.trim();
-			if (!path) throw new Error('Please enter a path.');
-			if (!(await fileExists(path))) {
-				throw new Error('File not found at that path.');
-			}
-
-			const words = await readKoboWords(path);
-			if (words.length === 0) {
-				this.pathError = 'No English words found in this database.';
-				this.reading = false;
-				this.render();
-				return;
-			}
-
-			const settings = this.getSettings();
-			this.items = words.map((kobo) => {
-				const dup = wordNoteExists(this.app, settings, kobo.word);
-				return {
-					kobo,
-					bookName: kobo.bookTitle ? titleCase(kobo.bookTitle) : '',
-					checked: !dup,
-					duplicate: dup,
-				};
-			});
-
-			this.searchQuery = '';
-			this.reading = false;
-			this.stubUnfound = settings.stubUnfoundWords;
-			this.state = 'wordlist';
+	private parseInput() {
+		this.inputError = '';
+		const words = parseWordList(this.rawInput);
+		if (words.length === 0) {
+			this.inputError = 'No words detected. Paste a comma- or newline-separated list above.';
 			this.render();
-		} catch (err) {
-			this.pathError = (err as Error).message;
-			this.reading = false;
-			this.render();
+			return;
 		}
+
+		const settings = this.getSettings();
+		this.items = words.map((word) => {
+			const dup = wordNoteExists(this.app, settings, word);
+			return { word, checked: !dup, duplicate: dup };
+		});
+		this.searchQuery = '';
+		this.state = 'wordlist';
+		this.render();
 	}
 
-	// ── State 2: word list with checkboxes ────────────────────────
+	// ── State 2: review parsed words ──────────────────────────────
 
 	private renderWordListState() {
-		const totalWords = this.items.length;
+		const total = this.items.length;
 		const dupCount = this.items.filter((i) => i.duplicate).length;
 
 		this.contentEl.createEl('h3', {
-			text: `${totalWords} word${totalWords === 1 ? '' : 's'} found on your Kobo`,
+			text: `${total} word${total === 1 ? '' : 's'} ready to import`,
 		});
 
 		const desc = this.contentEl.createEl('p', { cls: 'setting-item-description' });
-		desc.appendText('Pick which words to import. ');
+		desc.appendText('Review the parsed list. ');
 		if (dupCount > 0) {
-			desc.appendText(`${dupCount} ${dupCount === 1 ? 'is' : 'are'} already in your lexicon and pre-unchecked. `);
+			desc.appendText(`${dupCount} ${dupCount === 1 ? 'is' : 'are'} already in your lexicon and pre-unchecked.`);
 		}
-		desc.appendText('Sources will link to the book each word came from.');
 
 		const stubOpt = this.contentEl.createDiv();
 		stubOpt.style.cssText =
 			'display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
-		const stubCheckbox = stubOpt.createEl('input');
-		stubCheckbox.type = 'checkbox';
-		stubCheckbox.id = 'lex-kobo-stub';
-		stubCheckbox.checked = this.stubUnfound;
-		stubCheckbox.addEventListener('change', () => {
-			this.stubUnfound = stubCheckbox.checked;
-		});
-		const stubLabel = stubOpt.createEl('label');
-		stubLabel.htmlFor = 'lex-kobo-stub';
-		stubLabel.style.cssText = 'cursor: pointer; flex: 1;';
-		stubLabel.appendText('Create stub notes for words not found in the dictionary');
-		const stubHint = stubOpt.createEl('span');
-		stubHint.style.cssText = 'color: var(--text-muted); font-size: 12px;';
-		stubHint.textContent = '(names, slang, technical terms)';
+		const cb = stubOpt.createEl('input');
+		cb.type = 'checkbox';
+		cb.id = 'lex-mass-stub-2';
+		cb.checked = this.stubUnfound;
+		cb.addEventListener('change', () => (this.stubUnfound = cb.checked));
+		const label = stubOpt.createEl('label');
+		label.htmlFor = 'lex-mass-stub-2';
+		label.style.cssText = 'cursor: pointer; flex: 1;';
+		label.appendText('Create stub notes for words not found in the dictionary');
 
-		// Toolbar: search + select-all + count
 		const toolbar = this.contentEl.createDiv();
 		toolbar.style.cssText = 'display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;';
 
@@ -233,18 +212,15 @@ export class KoboImportModal extends Modal {
 			this.refreshList();
 		});
 
-		// List
 		this.listEl = this.contentEl.createDiv();
 		this.listEl.style.cssText =
-			'max-height: 380px; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px;';
-
+			'max-height: 360px; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px;';
 		this.refreshList();
 
-		// Footer
 		const footer = new Setting(this.contentEl);
 		footer.addButton((btn) =>
 			btn.setButtonText('Back').onClick(() => {
-				this.state = 'path';
+				this.state = 'input';
 				this.render();
 			})
 		);
@@ -262,12 +238,7 @@ export class KoboImportModal extends Modal {
 	private visibleItems(): WordItem[] {
 		const q = this.searchQuery.trim().toLowerCase();
 		if (!q) return this.items;
-		return this.items.filter(
-			(i) =>
-				i.kobo.word.toLowerCase().includes(q) ||
-				i.bookName.toLowerCase().includes(q) ||
-				(i.kobo.bookTitle ?? '').toLowerCase().includes(q)
-		);
+		return this.items.filter((i) => i.word.toLowerCase().includes(q));
 	}
 
 	private refreshList() {
@@ -275,7 +246,6 @@ export class KoboImportModal extends Modal {
 		this.listEl.empty();
 
 		const visible = this.visibleItems();
-
 		if (visible.length === 0) {
 			const empty = this.listEl.createDiv();
 			empty.style.cssText = 'padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;';
@@ -286,10 +256,8 @@ export class KoboImportModal extends Modal {
 
 		for (const item of visible) {
 			const row = this.listEl.createDiv();
-			// CSS grid keeps every column aligned regardless of which rows
-			// have the "already saved" tag.
 			row.style.cssText =
-				'display: grid; grid-template-columns: auto 1fr 220px 110px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
+				'display: grid; grid-template-columns: auto 1fr 110px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
 			row.addEventListener('click', (e) => {
 				if ((e.target as HTMLElement).tagName === 'INPUT') return;
 				item.checked = !item.checked;
@@ -306,19 +274,12 @@ export class KoboImportModal extends Modal {
 
 			const word = row.createDiv();
 			word.style.cssText = 'font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-			word.textContent = item.kobo.word;
+			word.textContent = item.word;
 			if (item.duplicate) {
 				word.style.color = 'var(--text-muted)';
 				word.style.textDecoration = 'line-through';
 			}
 
-			const book = row.createDiv();
-			book.style.cssText =
-				'color: var(--text-muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-			book.textContent = item.bookName || '(no book)';
-			book.title = item.bookName || '(no book)';
-
-			// Always-present tag cell so the column grid stays aligned across rows.
 			const tagCell = row.createDiv();
 			tagCell.style.cssText = 'text-align: right;';
 			if (item.duplicate) {
@@ -341,7 +302,7 @@ export class KoboImportModal extends Modal {
 		this.importBtn.disabled = selected === 0;
 	}
 
-	// ── State 3: progress ──────────────────────────────────────────
+	// ── State 3: progress ─────────────────────────────────────────
 
 	private renderProgressState() {
 		this.contentEl.createEl('h3', { text: 'Importing…' });
@@ -366,22 +327,12 @@ export class KoboImportModal extends Modal {
 		this.render();
 
 		const settings = this.getSettings();
-		const existingBooks = new Set<string>();
-		// Pre-warm with names already in the books folder so we don't re-create stubs.
-		for (const item of queue) {
-			if (item.bookName && bookNoteExists(this.app, settings.booksFolder, item.bookName)) {
-				existingBooks.add(item.bookName.toLowerCase());
-			}
-		}
 
 		for (let i = 0; i < queue.length; i++) {
 			if (this.cancelRequested) break;
-			const item = queue[i];
-			const word = item.kobo.word;
+			const { word } = queue[i];
 
 			this.updateProgressLine(`Looking up "${word}" (${i + 1} of ${queue.length})…`);
-
-			const source = await this.resolveSource(item, settings, existingBooks);
 
 			let entry: WordEntry;
 			let stubbed = false;
@@ -393,20 +344,18 @@ export class KoboImportModal extends Modal {
 						entry = createStubEntry(word);
 						stubbed = true;
 					} else {
-						this.summary.notFound.push({ word, source });
-						console.warn(`[Lexophile] "${word}": not found`);
+						this.summary.notFound.push(word);
 						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
-					console.warn(`[Lexophile] "${word}":`, (err as Error).message);
 					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
 					continue;
 				}
 			}
 
-			entry.source = source;
+			entry.source = 'manual';
 			try {
 				const result = await createWordNote(this.app, settings, entry);
 				if (result.action === 'skipped') this.summary.skipped++;
@@ -416,40 +365,14 @@ export class KoboImportModal extends Modal {
 				this.summary.errors.push({ word, reason: (err as Error).message });
 			}
 
-			if (i < queue.length - 1) {
-				await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
-			}
+			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
 		}
 
 		this.state = 'done';
 		this.render();
 	}
 
-	// Resolves the source frontmatter value for an item, creating a book stub
-	// if needed per settings.unmatchedBookHandling. Mutates `existingBooks` to
-	// remember any stubs it creates.
-	private async resolveSource(
-		item: WordItem,
-		settings: DictionarySettings,
-		existingBooks: Set<string>
-	): Promise<string> {
-		const bookName = cleanBookTitle(item.bookName);
-		if (!bookName) return 'kobo';
-		if (existingBooks.has(bookName.toLowerCase())) return `[[${bookName}]]`;
-
-		switch (settings.unmatchedBookHandling) {
-			case 'create':
-				await ensureBookStub(this.app, settings.booksFolder, bookName);
-				existingBooks.add(bookName.toLowerCase());
-				return `[[${bookName}]]`;
-			case 'linkOnly':
-				return `[[${bookName}]]`;
-			case 'plainText':
-				return `Kobo: ${bookName}`;
-		}
-	}
-
-	// ── State 4: done ──────────────────────────────────────────────
+	// ── State 4: done ─────────────────────────────────────────────
 
 	private renderDoneState() {
 		this.contentEl.createEl('h3', { text: this.cancelRequested ? 'Import cancelled' : 'Done' });
@@ -465,10 +388,9 @@ export class KoboImportModal extends Modal {
 		totals.innerHTML = totalLines.map((l) => `• ${l}`).join('<br>');
 
 		if (notFound.length > 0) {
-			const words = notFound.map((n) => n.word);
 			this.renderWordListSection(
 				`${notFound.length} not found in the dictionary`,
-				words,
+				notFound,
 				"These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
 			);
 
@@ -496,12 +418,10 @@ export class KoboImportModal extends Modal {
 			const parts: string[] = [];
 			if (imported > 0) parts.push(`imported ${imported}`);
 			if (stubbed > 0) parts.push(`stubbed ${stubbed}`);
-			new Notice(`Lexophile: ${parts.join(', ')} word${imported + stubbed === 1 ? '' : 's'} from Kobo.`);
+			new Notice(`Lexophile: ${parts.join(', ')} word${imported + stubbed === 1 ? '' : 's'}.`);
 		}
 	}
 
-	// Retroactively turn each not-found word into a stub note. Sources were
-	// captured during the original import, so we can reuse them verbatim.
 	private async stubNotFound(triggerBtn: HTMLButtonElement) {
 		const pending = this.summary.notFound.slice();
 		if (pending.length === 0) return;
@@ -511,16 +431,16 @@ export class KoboImportModal extends Modal {
 
 		const settings = this.getSettings();
 		let created = 0;
-		const stillFailed: NotFoundItem[] = [];
+		const stillFailed: string[] = [];
 
-		for (const item of pending) {
+		for (const word of pending) {
 			try {
-				const entry = createStubEntry(item.word, item.source);
+				const entry = createStubEntry(word, 'manual');
 				const result = await createWordNote(this.app, settings, entry);
 				if (result.action !== 'skipped') created++;
 			} catch (err) {
-				stillFailed.push(item);
-				console.warn(`[Lexophile] stub "${item.word}":`, (err as Error).message);
+				stillFailed.push(word);
+				console.warn(`[Lexophile] stub "${word}":`, (err as Error).message);
 			}
 		}
 

@@ -2,6 +2,7 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, TFolder, normalizePath 
 import { DictionaryServer } from './server';
 import { AddWordModal } from './wordModal';
 import { KoboImportModal } from './koboImportModal';
+import { MassImportModal } from './massImportModal';
 import { FolderSuggest } from './folderSuggest';
 import { DEFAULT_SETTINGS, DEFAULT_TEMPLATE } from './settings';
 import type { DictionarySettings } from './settings';
@@ -28,6 +29,14 @@ export default class DictionaryPlugin extends Plugin {
 			name: 'Add word to lexicon',
 			callback: () => {
 				new AddWordModal(this.app, () => this.settings).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'mass-import',
+			name: 'Mass-import words from a list',
+			callback: () => {
+				new MassImportModal(this.app, () => this.settings).open();
 			},
 		});
 

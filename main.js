@@ -2424,7 +2424,7 @@ __export(main_exports, {
   default: () => DictionaryPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/server.ts
 var http = __toESM(require("http"));
@@ -2747,12 +2747,24 @@ var WordNotFoundError = class extends Error {
     this.name = "WordNotFoundError";
   }
 };
+var MAX_RETRIES = 4;
+var BASE_BACKOFF_MS = 1500;
 async function lookupWord(word) {
   var _a, _b, _c, _d, _e, _f, _g;
   const url = API_BASE + encodeURIComponent(word.trim());
-  const res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
+  let res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
+  let attempt = 0;
+  while ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+    const delay = BASE_BACKOFF_MS * Math.pow(2, attempt);
+    await new Promise((r) => setTimeout(r, delay));
+    attempt++;
+    res = await (0, import_obsidian4.requestUrl)({ url, method: "GET", throw: false });
+  }
   if (res.status === 404) {
     throw new WordNotFoundError(word);
+  }
+  if (res.status === 429) {
+    throw new Error(`Rate-limited by Dictionary API after ${attempt} retries. Try a smaller batch or wait a minute.`);
   }
   if (res.status !== 200) {
     throw new Error(`Dictionary API returned status ${res.status}.`);
@@ -3019,7 +3031,7 @@ date-added: ${today}
 
 // src/koboImportModal.ts
 var DEFAULT_KOBO_PATH = "/Volumes/KOBOeReader/.kobo/KoboReader.sqlite";
-var RATE_LIMIT_MS = 150;
+var RATE_LIMIT_MS = 350;
 var KoboImportModal = class extends import_obsidian7.Modal {
   constructor(app, getSettings) {
     super(app);
@@ -3462,9 +3474,407 @@ var KoboImportModal = class extends import_obsidian7.Modal {
   }
 };
 
-// src/folderSuggest.ts
+// src/massImportModal.ts
 var import_obsidian8 = require("obsidian");
-var FolderSuggest = class extends import_obsidian8.AbstractInputSuggest {
+var RATE_LIMIT_MS2 = 350;
+function parseWordList(raw) {
+  const tokens = raw.split(/[\s,;]+/).map((t) => t.replace(/^[^\p{L}'-]+|[^\p{L}'-]+$/gu, ""));
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const t of tokens) {
+    if (!t)
+      continue;
+    const key = t.toLowerCase();
+    if (seen.has(key))
+      continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+var MassImportModal = class extends import_obsidian8.Modal {
+  constructor(app, getSettings) {
+    super(app);
+    this.state = "input";
+    // Input state
+    this.rawInput = "";
+    this.stubUnfound = false;
+    this.inputError = "";
+    // Word list state
+    this.items = [];
+    this.searchQuery = "";
+    this.listEl = null;
+    this.importBtn = null;
+    // Progress state
+    this.progressLine = "";
+    this.progressEl = null;
+    this.summary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
+    this.cancelRequested = false;
+    this.getSettings = getSettings;
+  }
+  onOpen() {
+    this.modalEl.style.maxWidth = "720px";
+    this.stubUnfound = this.getSettings().stubUnfoundWords;
+    this.render();
+  }
+  onClose() {
+    this.cancelRequested = true;
+    this.contentEl.empty();
+  }
+  render() {
+    this.contentEl.empty();
+    if (this.state === "input")
+      return this.renderInputState();
+    if (this.state === "wordlist")
+      return this.renderWordListState();
+    if (this.state === "progress")
+      return this.renderProgressState();
+    this.renderDoneState();
+  }
+  // ── State 1: paste a list ──────────────────────────────────────
+  renderInputState() {
+    this.contentEl.createEl("h3", { text: "Mass-import words" });
+    this.contentEl.createEl("p", {
+      text: "Paste a list of words below. Separate them with commas, spaces, or new lines \u2014 Lexophile will figure it out.",
+      cls: "setting-item-description"
+    });
+    const textarea = this.contentEl.createEl("textarea");
+    textarea.rows = 10;
+    textarea.placeholder = "serendipity, ephemeral, perspicacious\ngossamer\nalacrity";
+    textarea.style.cssText = "width: 100%; font-family: var(--font-monospace, monospace); font-size: 13px; padding: 10px; margin-bottom: 8px; resize: vertical;";
+    textarea.value = this.rawInput;
+    textarea.addEventListener("input", () => this.rawInput = textarea.value);
+    if (this.inputError) {
+      const err = this.contentEl.createEl("p");
+      err.style.cssText = "color: var(--text-error); font-size: 13px; margin-top: 4px;";
+      err.textContent = this.inputError;
+    }
+    const stubOpt = this.contentEl.createDiv();
+    stubOpt.style.cssText = "display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;";
+    const cb = stubOpt.createEl("input");
+    cb.type = "checkbox";
+    cb.id = "lex-mass-stub";
+    cb.checked = this.stubUnfound;
+    cb.addEventListener("change", () => this.stubUnfound = cb.checked);
+    const label = stubOpt.createEl("label");
+    label.htmlFor = "lex-mass-stub";
+    label.style.cssText = "cursor: pointer; flex: 1;";
+    label.appendText("Create stub notes for words not found in the dictionary");
+    new import_obsidian8.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Cancel").onClick(() => this.close())).addButton(
+      (btn) => btn.setButtonText("Parse list").setCta().onClick(() => this.parseInput())
+    );
+    window.setTimeout(() => textarea.focus(), 0);
+  }
+  parseInput() {
+    this.inputError = "";
+    const words = parseWordList(this.rawInput);
+    if (words.length === 0) {
+      this.inputError = "No words detected. Paste a comma- or newline-separated list above.";
+      this.render();
+      return;
+    }
+    const settings = this.getSettings();
+    this.items = words.map((word) => {
+      const dup = wordNoteExists(this.app, settings, word);
+      return { word, checked: !dup, duplicate: dup };
+    });
+    this.searchQuery = "";
+    this.state = "wordlist";
+    this.render();
+  }
+  // ── State 2: review parsed words ──────────────────────────────
+  renderWordListState() {
+    const total = this.items.length;
+    const dupCount = this.items.filter((i) => i.duplicate).length;
+    this.contentEl.createEl("h3", {
+      text: `${total} word${total === 1 ? "" : "s"} ready to import`
+    });
+    const desc = this.contentEl.createEl("p", { cls: "setting-item-description" });
+    desc.appendText("Review the parsed list. ");
+    if (dupCount > 0) {
+      desc.appendText(`${dupCount} ${dupCount === 1 ? "is" : "are"} already in your lexicon and pre-unchecked.`);
+    }
+    const stubOpt = this.contentEl.createDiv();
+    stubOpt.style.cssText = "display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;";
+    const cb = stubOpt.createEl("input");
+    cb.type = "checkbox";
+    cb.id = "lex-mass-stub-2";
+    cb.checked = this.stubUnfound;
+    cb.addEventListener("change", () => this.stubUnfound = cb.checked);
+    const label = stubOpt.createEl("label");
+    label.htmlFor = "lex-mass-stub-2";
+    label.style.cssText = "cursor: pointer; flex: 1;";
+    label.appendText("Create stub notes for words not found in the dictionary");
+    const toolbar = this.contentEl.createDiv();
+    toolbar.style.cssText = "display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;";
+    const searchEl = toolbar.createEl("input");
+    searchEl.type = "text";
+    searchEl.placeholder = "Search words\u2026";
+    searchEl.style.cssText = "flex: 1; padding: 6px 10px; font-size: 13px;";
+    searchEl.value = this.searchQuery;
+    searchEl.addEventListener("input", () => {
+      this.searchQuery = searchEl.value;
+      this.refreshList();
+    });
+    const allBtn = toolbar.createEl("button");
+    allBtn.textContent = "Select all";
+    allBtn.addEventListener("click", () => {
+      const visible = this.visibleItems();
+      const allOn = visible.every((i) => i.checked);
+      for (const item of visible)
+        item.checked = !allOn;
+      this.refreshList();
+    });
+    const noneBtn = toolbar.createEl("button");
+    noneBtn.textContent = "Clear";
+    noneBtn.addEventListener("click", () => {
+      for (const item of this.visibleItems())
+        item.checked = false;
+      this.refreshList();
+    });
+    this.listEl = this.contentEl.createDiv();
+    this.listEl.style.cssText = "max-height: 360px; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px;";
+    this.refreshList();
+    const footer = new import_obsidian8.Setting(this.contentEl);
+    footer.addButton(
+      (btn) => btn.setButtonText("Back").onClick(() => {
+        this.state = "input";
+        this.render();
+      })
+    );
+    footer.addButton((btn) => {
+      this.importBtn = btn.buttonEl;
+      btn.setButtonText("").setCta().onClick(() => void this.runImport());
+    });
+    this.updateImportButtonLabel();
+  }
+  visibleItems() {
+    const q = this.searchQuery.trim().toLowerCase();
+    if (!q)
+      return this.items;
+    return this.items.filter((i) => i.word.toLowerCase().includes(q));
+  }
+  refreshList() {
+    if (!this.listEl)
+      return;
+    this.listEl.empty();
+    const visible = this.visibleItems();
+    if (visible.length === 0) {
+      const empty = this.listEl.createDiv();
+      empty.style.cssText = "padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;";
+      empty.textContent = "No words match.";
+      this.updateImportButtonLabel();
+      return;
+    }
+    for (const item of visible) {
+      const row = this.listEl.createDiv();
+      row.style.cssText = "display: grid; grid-template-columns: auto 1fr 110px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;";
+      row.addEventListener("click", (e) => {
+        if (e.target.tagName === "INPUT")
+          return;
+        item.checked = !item.checked;
+        this.refreshList();
+      });
+      const checkbox = row.createEl("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = item.checked;
+      checkbox.addEventListener("change", () => {
+        item.checked = checkbox.checked;
+        this.updateImportButtonLabel();
+      });
+      const word = row.createDiv();
+      word.style.cssText = "font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
+      word.textContent = item.word;
+      if (item.duplicate) {
+        word.style.color = "var(--text-muted)";
+        word.style.textDecoration = "line-through";
+      }
+      const tagCell = row.createDiv();
+      tagCell.style.cssText = "text-align: right;";
+      if (item.duplicate) {
+        const pill = tagCell.createSpan();
+        pill.style.cssText = "font-size: 11px; padding: 2px 8px; background: var(--background-modifier-border); border-radius: 10px; color: var(--text-muted); white-space: nowrap;";
+        pill.textContent = "already saved";
+      }
+    }
+    this.updateImportButtonLabel();
+  }
+  updateImportButtonLabel() {
+    if (!this.importBtn)
+      return;
+    const selected = this.items.filter((i) => i.checked).length;
+    this.importBtn.textContent = selected > 0 ? `Import ${selected} word${selected === 1 ? "" : "s"}` : "Import";
+    this.importBtn.disabled = selected === 0;
+  }
+  // ── State 3: progress ─────────────────────────────────────────
+  renderProgressState() {
+    this.contentEl.createEl("h3", { text: "Importing\u2026" });
+    this.progressEl = this.contentEl.createEl("p");
+    this.progressEl.style.cssText = "font-family: monospace; font-size: 13px; padding: 8px 0; color: var(--text-muted);";
+    this.progressEl.textContent = this.progressLine || "Starting\u2026";
+  }
+  updateProgressLine(line) {
+    this.progressLine = line;
+    if (this.progressEl)
+      this.progressEl.textContent = line;
+  }
+  async runImport() {
+    const queue = this.items.filter((i) => i.checked);
+    if (queue.length === 0)
+      return;
+    this.state = "progress";
+    this.summary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
+    this.cancelRequested = false;
+    this.render();
+    const settings = this.getSettings();
+    for (let i = 0; i < queue.length; i++) {
+      if (this.cancelRequested)
+        break;
+      const { word } = queue[i];
+      this.updateProgressLine(`Looking up "${word}" (${i + 1} of ${queue.length})\u2026`);
+      let entry;
+      let stubbed = false;
+      try {
+        entry = await lookupWord(word);
+      } catch (err) {
+        if (err instanceof WordNotFoundError) {
+          if (this.stubUnfound) {
+            entry = createStubEntry(word);
+            stubbed = true;
+          } else {
+            this.summary.notFound.push(word);
+            if (i < queue.length - 1)
+              await new Promise((r) => setTimeout(r, RATE_LIMIT_MS2));
+            continue;
+          }
+        } else {
+          this.summary.errors.push({ word, reason: err.message });
+          if (i < queue.length - 1)
+            await new Promise((r) => setTimeout(r, RATE_LIMIT_MS2));
+          continue;
+        }
+      }
+      entry.source = "manual";
+      try {
+        const result = await createWordNote(this.app, settings, entry);
+        if (result.action === "skipped")
+          this.summary.skipped++;
+        else if (stubbed)
+          this.summary.stubbed++;
+        else
+          this.summary.imported++;
+      } catch (err) {
+        this.summary.errors.push({ word, reason: err.message });
+      }
+      if (i < queue.length - 1)
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_MS2));
+    }
+    this.state = "done";
+    this.render();
+  }
+  // ── State 4: done ─────────────────────────────────────────────
+  renderDoneState() {
+    this.contentEl.createEl("h3", { text: this.cancelRequested ? "Import cancelled" : "Done" });
+    const { imported, skipped, stubbed, notFound, errors } = this.summary;
+    const totals = this.contentEl.createEl("p");
+    totals.style.cssText = "font-size: 14px; line-height: 1.6;";
+    const totalLines = [];
+    totalLines.push(`\u2713 Imported ${imported} word${imported === 1 ? "" : "s"}`);
+    if (stubbed)
+      totalLines.push(`\u270E Created ${stubbed} stub${stubbed === 1 ? "" : "s"} for unknown words`);
+    if (skipped)
+      totalLines.push(`${skipped} already in your lexicon (skipped)`);
+    totals.innerHTML = totalLines.map((l) => `\u2022 ${l}`).join("<br>");
+    if (notFound.length > 0) {
+      this.renderWordListSection(
+        `${notFound.length} not found in the dictionary`,
+        notFound,
+        "These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
+      );
+      const stubBtnWrap = this.contentEl.createDiv();
+      stubBtnWrap.style.cssText = "margin-top: 8px;";
+      const stubBtn = stubBtnWrap.createEl("button");
+      stubBtn.textContent = `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? "" : "s"}`;
+      stubBtn.addEventListener("click", () => void this.stubNotFound(stubBtn));
+    }
+    if (errors.length > 0) {
+      const errorList = errors.map((e) => `${e.word} \u2014 ${e.reason}`);
+      this.renderWordListSection(
+        `${errors.length} error${errors.length === 1 ? "" : "s"}`,
+        errorList,
+        "Likely network issues. Try the import again later."
+      );
+    }
+    new import_obsidian8.Setting(this.contentEl).addButton(
+      (btn) => btn.setButtonText("Close").setCta().onClick(() => this.close())
+    );
+    if (imported > 0 || stubbed > 0) {
+      const parts = [];
+      if (imported > 0)
+        parts.push(`imported ${imported}`);
+      if (stubbed > 0)
+        parts.push(`stubbed ${stubbed}`);
+      new import_obsidian8.Notice(`Lexophile: ${parts.join(", ")} word${imported + stubbed === 1 ? "" : "s"}.`);
+    }
+  }
+  async stubNotFound(triggerBtn) {
+    const pending = this.summary.notFound.slice();
+    if (pending.length === 0)
+      return;
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = "Creating stubs\u2026";
+    const settings = this.getSettings();
+    let created = 0;
+    const stillFailed = [];
+    for (const word of pending) {
+      try {
+        const entry = createStubEntry(word, "manual");
+        const result = await createWordNote(this.app, settings, entry);
+        if (result.action !== "skipped")
+          created++;
+      } catch (err) {
+        stillFailed.push(word);
+        console.warn(`[Lexophile] stub "${word}":`, err.message);
+      }
+    }
+    this.summary.stubbed += created;
+    this.summary.notFound = stillFailed;
+    new import_obsidian8.Notice(`Lexophile: created ${created} stub${created === 1 ? "" : "s"}.`);
+    this.render();
+  }
+  renderWordListSection(title, words, hint) {
+    const wrap = this.contentEl.createDiv();
+    wrap.style.cssText = "margin-top: 16px;";
+    const heading = wrap.createEl("h4", { text: title });
+    heading.style.cssText = "margin: 0 0 4px; font-size: 13px; font-weight: 600;";
+    const hintEl = wrap.createEl("p", { text: hint, cls: "setting-item-description" });
+    hintEl.style.cssText = "margin: 0 0 8px;";
+    const list = wrap.createDiv();
+    list.style.cssText = "max-height: 160px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: var(--font-monospace, monospace);";
+    for (const word of words) {
+      const row = list.createDiv();
+      row.style.cssText = "padding: 2px 0;";
+      row.textContent = word;
+    }
+    const copyBtn = wrap.createEl("button");
+    copyBtn.textContent = "Copy list";
+    copyBtn.style.cssText = "margin-top: 8px;";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(words.join("\n"));
+        const original = copyBtn.textContent;
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => copyBtn.textContent = original, 1500);
+      } catch (e) {
+        new import_obsidian8.Notice("Could not copy to clipboard.");
+      }
+    });
+  }
+};
+
+// src/folderSuggest.ts
+var import_obsidian9 = require("obsidian");
+var FolderSuggest = class extends import_obsidian9.AbstractInputSuggest {
   constructor(app, inputEl, extraDefaults = []) {
     super(app, inputEl);
     this.folders = this.collectFolders(extraDefaults);
@@ -3475,7 +3885,7 @@ var FolderSuggest = class extends import_obsidian8.AbstractInputSuggest {
       if (folder.path)
         set.add(folder.path);
       for (const child of folder.children) {
-        if (child instanceof import_obsidian8.TFolder)
+        if (child instanceof import_obsidian9.TFolder)
           walk(child);
       }
     };
@@ -3531,7 +3941,7 @@ var DEFAULT_SETTINGS = {
 };
 
 // src/main.ts
-var DictionaryPlugin = class extends import_obsidian9.Plugin {
+var DictionaryPlugin = class extends import_obsidian10.Plugin {
   async onload() {
     await this.loadSettings();
     this.server = new DictionaryServer(
@@ -3549,11 +3959,18 @@ var DictionaryPlugin = class extends import_obsidian9.Plugin {
       }
     });
     this.addCommand({
+      id: "mass-import",
+      name: "Mass-import words from a list",
+      callback: () => {
+        new MassImportModal(this.app, () => this.settings).open();
+      }
+    });
+    this.addCommand({
       id: "import-kobo",
       name: "Import words from Kobo",
       callback: () => {
         if (!this.settings.enableKoboImport) {
-          new import_obsidian9.Notice("Lexophile: enable Kobo import in Settings \u2192 Lexophile first.");
+          new import_obsidian10.Notice("Lexophile: enable Kobo import in Settings \u2192 Lexophile first.");
           return;
         }
         new KoboImportModal(this.app, () => this.settings).open();
@@ -3574,9 +3991,9 @@ var DictionaryPlugin = class extends import_obsidian9.Plugin {
   async startServer() {
     try {
       await this.server.start(this.settings.port);
-      new import_obsidian9.Notice(`Lexophile: server running on port ${this.settings.port}`);
+      new import_obsidian10.Notice(`Lexophile: server running on port ${this.settings.port}`);
     } catch (err) {
-      new import_obsidian9.Notice(`Lexophile: failed to start server \u2014 ${err.message}`);
+      new import_obsidian10.Notice(`Lexophile: failed to start server \u2014 ${err.message}`);
       console.error("[Lexophile]", err);
     }
   }
@@ -3593,7 +4010,7 @@ var DictionaryPlugin = class extends import_obsidian9.Plugin {
     await this.saveData(this.settings);
   }
 };
-var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
+var DictionarySettingTab = class extends import_obsidian10.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -3615,25 +4032,25 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
     fromBrowser.appendText("From the web: install the Lexophile Chrome extension, highlight a word, right-click, and choose ");
     fromBrowser.createEl("strong", { text: 'Add "<word>" to Lexophile' });
     fromBrowser.appendText(".");
-    new import_obsidian9.Setting(containerEl).setName("Dictionary folder").setDesc("Folder where new notes will be created. Created automatically if it does not exist.").addText(
+    new import_obsidian10.Setting(containerEl).setName("Dictionary folder").setDesc("Folder where new notes will be created. Created automatically if it does not exist.").addText(
       (text) => text.setPlaceholder("Dictionary").setValue(this.plugin.settings.folder).onChange(async (value) => {
         this.plugin.settings.folder = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Note naming").setDesc("How to capitalize the note filename.").addDropdown(
+    new import_obsidian10.Setting(containerEl).setName("Note naming").setDesc("How to capitalize the note filename.").addDropdown(
       (drop) => drop.addOption("asis", "As-is").addOption("lowercase", "lowercase").addOption("titlecase", "Title Case").setValue(this.plugin.settings.namingConvention).onChange(async (value) => {
         this.plugin.settings.namingConvention = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Duplicate handling").setDesc("What to do when a note for the word already exists.").addDropdown(
+    new import_obsidian10.Setting(containerEl).setName("Duplicate handling").setDesc("What to do when a note for the word already exists.").addDropdown(
       (drop) => drop.addOption("skip", "Skip \u2014 keep existing note").addOption("append", "Append new definition").addOption("overwrite", "Overwrite").setValue(this.plugin.settings.duplicateHandling).onChange(async (value) => {
         this.plugin.settings.duplicateHandling = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Create stubs for unknown words").setDesc(
+    new import_obsidian10.Setting(containerEl).setName("Create stubs for unknown words").setDesc(
       "When the dictionary has no entry for a word (a name, slang, technical term), save a stub note with empty fields instead of failing. You can fill in the definition later."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.stubUnfoundWords).onChange(async (value) => {
@@ -3641,7 +4058,7 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Automatically create dictionary base").setDesc("Create a Bases file in the dictionary folder that lists every word in a table view.").addToggle(
+    new import_obsidian10.Setting(containerEl).setName("Automatically create dictionary base").setDesc("Create a Bases file in the dictionary folder that lists every word in a table view.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoCreateBase).onChange(async (value) => {
         this.plugin.settings.autoCreateBase = value;
         await this.plugin.saveSettings();
@@ -3649,7 +4066,7 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
       })
     );
     if (this.plugin.settings.autoCreateBase) {
-      new import_obsidian9.Setting(containerEl).setName("Base name").setDesc("Filename (without extension) for the auto-created base.").addText(
+      new import_obsidian10.Setting(containerEl).setName("Base name").setDesc("Filename (without extension) for the auto-created base.").addText(
         (text) => text.setPlaceholder("_Dictionary List").setValue(this.plugin.settings.baseName).onChange(async (value) => {
           this.plugin.settings.baseName = value;
           await this.plugin.saveSettings();
@@ -3661,7 +4078,7 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
     koboIntro.appendText("Import words you saved on your Kobo. Plug your Kobo into your computer, then run ");
     koboIntro.createEl("strong", { text: "Lexophile: Import words from Kobo" });
     koboIntro.appendText(" from the command palette. Each word becomes a dictionary note; its source links back to the book it came from in your library.");
-    new import_obsidian9.Setting(containerEl).setName("Enable Kobo import").setDesc("Reveals the Kobo settings and unlocks the import command.").addToggle(
+    new import_obsidian10.Setting(containerEl).setName("Enable Kobo import").setDesc("Reveals the Kobo settings and unlocks the import command.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableKoboImport).onChange(async (value) => {
         this.plugin.settings.enableKoboImport = value;
         await this.plugin.saveSettings();
@@ -3669,9 +4086,9 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
       })
     );
     if (this.plugin.settings.enableKoboImport) {
-      const booksFolderPath = (0, import_obsidian9.normalizePath)(this.plugin.settings.booksFolder || "Books");
-      const folderExists = this.app.vault.getAbstractFileByPath(booksFolderPath) instanceof import_obsidian9.TFolder;
-      new import_obsidian9.Setting(containerEl).setName("Books folder").setDesc(
+      const booksFolderPath = (0, import_obsidian10.normalizePath)(this.plugin.settings.booksFolder || "Books");
+      const folderExists = this.app.vault.getAbstractFileByPath(booksFolderPath) instanceof import_obsidian10.TFolder;
+      new import_obsidian10.Setting(containerEl).setName("Books folder").setDesc(
         folderExists ? `\u2713 Folder exists at "${booksFolderPath}". New book notes will be created here.` : `"${booksFolderPath}" doesn't exist yet. Create it below or pick another folder.`
       ).addText((text) => {
         text.setPlaceholder("Books").setValue(this.plugin.settings.booksFolder).onChange(async (value) => {
@@ -3682,19 +4099,19 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
         new FolderSuggest(this.app, text.inputEl, ["Books"]);
       });
       if (!folderExists) {
-        new import_obsidian9.Setting(containerEl).setName("Create books folder").setDesc(`Creates "${booksFolderPath}" so wikilinks resolve.`).addButton(
+        new import_obsidian10.Setting(containerEl).setName("Create books folder").setDesc(`Creates "${booksFolderPath}" so wikilinks resolve.`).addButton(
           (btn) => btn.setButtonText("Create folder").setCta().onClick(async () => {
             try {
               await this.app.vault.createFolder(booksFolderPath);
-              new import_obsidian9.Notice(`Lexophile: created "${booksFolderPath}".`);
+              new import_obsidian10.Notice(`Lexophile: created "${booksFolderPath}".`);
               this.display();
             } catch (err) {
-              new import_obsidian9.Notice(`Lexophile: ${err.message}`);
+              new import_obsidian10.Notice(`Lexophile: ${err.message}`);
             }
           })
         );
       }
-      new import_obsidian9.Setting(containerEl).setName("When a book isn't in your library").setDesc("What to do during import if the chosen book name has no matching note in the books folder.").addDropdown(
+      new import_obsidian10.Setting(containerEl).setName("When a book isn't in your library").setDesc("What to do during import if the chosen book name has no matching note in the books folder.").addDropdown(
         (drop) => drop.addOption("create", "Auto-create a stub book note").addOption("linkOnly", "Link without creating (red wikilinks)").addOption("plainText", "Use plain text source instead").setValue(this.plugin.settings.unmatchedBookHandling).onChange(async (value) => {
           this.plugin.settings.unmatchedBookHandling = value;
           await this.plugin.saveSettings();
@@ -3702,7 +4119,7 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
       );
     }
     containerEl.createEl("h3", { text: "Local server" });
-    new import_obsidian9.Setting(containerEl).setName("Port").setDesc("Port the plugin listens on. Requires a server restart to take effect.").addText(
+    new import_obsidian10.Setting(containerEl).setName("Port").setDesc("Port the plugin listens on. Requires a server restart to take effect.").addText(
       (text) => text.setPlaceholder("27124").setValue(String(this.plugin.settings.port)).onChange(async (value) => {
         const port = parseInt(value, 10);
         if (!isNaN(port) && port > 1023 && port < 65536) {
@@ -3711,14 +4128,14 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
         }
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("API token").setDesc("Secret the Chrome extension must send. Leave blank to disable auth (not recommended).").addText((text) => {
+    new import_obsidian10.Setting(containerEl).setName("API token").setDesc("Secret the Chrome extension must send. Leave blank to disable auth (not recommended).").addText((text) => {
       text.setPlaceholder("leave blank to disable").setValue(this.plugin.settings.apiToken).onChange(async (value) => {
         this.plugin.settings.apiToken = value;
         await this.plugin.saveSettings();
       });
       text.inputEl.type = "password";
     });
-    new import_obsidian9.Setting(containerEl).setName("Restart server").setDesc("Apply port changes by restarting the local server.").addButton(
+    new import_obsidian10.Setting(containerEl).setName("Restart server").setDesc("Apply port changes by restarting the local server.").addButton(
       (btn) => btn.setButtonText("Restart").onClick(async () => {
         await this.plugin.stopServer();
         await this.plugin.startServer();
@@ -3739,7 +4156,7 @@ var DictionarySettingTab = class extends import_obsidian9.PluginSettingTab {
       this.plugin.settings.template = textarea.value;
       await this.plugin.saveSettings();
     });
-    new import_obsidian9.Setting(containerEl).addButton(
+    new import_obsidian10.Setting(containerEl).addButton(
       (btn) => btn.setButtonText("Reset to default").onClick(async () => {
         this.plugin.settings.template = DEFAULT_TEMPLATE;
         await this.plugin.saveSettings();
