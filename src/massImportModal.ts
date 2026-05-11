@@ -4,9 +4,11 @@ import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import type { DictionarySettings } from './settings';
 
-// Local SQLite lookups are sub-millisecond, but we still yield to the event
-// loop between iterations so the progress line can repaint.
-const YIELD_MS = 0;
+// Spacing between consecutive lookups. The free Dictionary API rate-limits
+// faster than ~3 req/s, but local SQLite lookups are sub-millisecond — pick
+// per-import based on the user's chosen source.
+const API_DELAY_MS = 350;
+const LOCAL_YIELD_MS = 0;
 
 type State = 'input' | 'wordlist' | 'progress' | 'done';
 
@@ -140,7 +142,8 @@ export class MassImportModal extends Modal {
 
 	private parseInput() {
 		this.inputError = '';
-		if (!this.store.isReady()) {
+		const settings = this.getSettings();
+		if (settings.dictionarySource === 'local' && !this.store.isReady()) {
 			this.inputError = 'Local dictionary not loaded. Download it from Settings → Lexophile first.';
 			this.render();
 			return;
@@ -152,7 +155,6 @@ export class MassImportModal extends Modal {
 			return;
 		}
 
-		const settings = this.getSettings();
 		this.items = words.map((word) => {
 			const dup = wordNoteExists(this.app, settings, word);
 			return { word, checked: !dup, duplicate: dup };
@@ -335,6 +337,7 @@ export class MassImportModal extends Modal {
 		this.render();
 
 		const settings = this.getSettings();
+		const delayMs = settings.dictionarySource === 'api' ? API_DELAY_MS : LOCAL_YIELD_MS;
 
 		for (let i = 0; i < queue.length; i++) {
 			if (this.cancelRequested) break;
@@ -345,7 +348,7 @@ export class MassImportModal extends Modal {
 			let entry: WordEntry;
 			let stubbed = false;
 			try {
-				entry = await lookupWord(this.store, word);
+				entry = await lookupWord(this.store, word, settings.dictionarySource);
 			} catch (err) {
 				if (err instanceof WordNotFoundError) {
 					if (this.stubUnfound) {
@@ -353,12 +356,12 @@ export class MassImportModal extends Modal {
 						stubbed = true;
 					} else {
 						this.summary.notFound.push(word);
-						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
+						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
-					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
+					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
 					continue;
 				}
 			}
@@ -373,7 +376,7 @@ export class MassImportModal extends Modal {
 				this.summary.errors.push({ word, reason: (err as Error).message });
 			}
 
-			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, YIELD_MS));
+			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
 		}
 
 		this.state = 'done';

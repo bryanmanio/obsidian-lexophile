@@ -70,7 +70,7 @@ export class AddWordModal extends Modal {
 			let entry;
 			let stubbed = false;
 			try {
-				entry = await lookupWord(this.store, word);
+				entry = await lookupWord(this.store, word, settings.dictionarySource);
 			} catch (err) {
 				if (err instanceof DictionaryNotReadyError) {
 					new Notice('Lexophile: download the local dictionary in Settings → Lexophile first.');

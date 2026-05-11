@@ -1,6 +1,7 @@
 export type NamingConvention = 'asis' | 'lowercase' | 'titlecase';
 export type DuplicateHandling = 'skip' | 'append' | 'overwrite';
 export type UnmatchedBookHandling = 'create' | 'linkOnly' | 'plainText';
+export type DictionarySource = 'api' | 'local';
 
 export interface DictionarySettings {
 	folder: string;
@@ -12,6 +13,7 @@ export interface DictionarySettings {
 	autoCreateBase: boolean;
 	baseName: string;
 	stubUnfoundWords: boolean;
+	dictionarySource: DictionarySource;
 	dictionaryUrl: string;
 	enableKoboImport: boolean;
 	booksFolder: string;
@@ -44,6 +46,7 @@ export const DEFAULT_SETTINGS: DictionarySettings = {
 	autoCreateBase: true,
 	baseName: '_Dictionary List',
 	stubUnfoundWords: false,
+	dictionarySource: 'api',
 	dictionaryUrl: 'https://github.com/bryanmanio/obsidian-lexophile/releases/download/dictionary-v1/dictionary.sqlite',
 	enableKoboImport: false,
 	booksFolder: 'Books',

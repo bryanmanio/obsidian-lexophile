@@ -134,38 +134,60 @@ class DictionarySettingTab extends PluginSettingTab {
 		fromBrowser.createEl('strong', { text: 'Add "<word>" to Lexophile' });
 		fromBrowser.appendText('.');
 
-		// ── Local dictionary ─────────────────────────────────────────
+		// ── Dictionary source ────────────────────────────────────────
 
-		containerEl.createEl('h3', { text: 'Local dictionary' });
-
-		const dictIntro = containerEl.createEl('p', { cls: 'setting-item-description' });
-		dictIntro.appendText(
-			'Lexophile looks up words against a local SQLite dictionary (~23MB, ~167K English entries from Wiktionary via '
-		);
-		dictIntro.createEl('a', {
-			text: 'MattDodsonEnglish/english-dictionary',
-			href: 'https://github.com/MattDodsonEnglish/english-dictionary',
-		});
-		dictIntro.appendText('). It downloads once on first use — no network calls during normal use after that.');
-
-		const dictStatus = containerEl.createDiv();
-		dictStatus.style.cssText =
-			'padding: 10px 12px; margin: 4px 0 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
-		this.renderDictionaryStatus(dictStatus);
+		containerEl.createEl('h3', { text: 'Dictionary source' });
 
 		new Setting(containerEl)
-			.setName('Dictionary download URL')
-			.setDesc('Where the dictionary SQLite is downloaded from. Override only if mirroring or using a custom build.')
-			.addText((text) => {
-				text
-					.setPlaceholder('https://…/dictionary.sqlite')
-					.setValue(this.plugin.settings.dictionaryUrl)
+			.setName('Where to look up definitions')
+			.setDesc('Online uses the Free Dictionary API. Local downloads a one-time 23MB SQLite and works offline thereafter.')
+			.addDropdown((drop) =>
+				drop
+					.addOption('api', 'Online (Free Dictionary API)')
+					.addOption('local', 'Local SQLite (offline)')
+					.setValue(this.plugin.settings.dictionarySource)
 					.onChange(async (value) => {
-						this.plugin.settings.dictionaryUrl = value;
+						this.plugin.settings.dictionarySource = value as DictionarySettings['dictionarySource'];
 						await this.plugin.saveSettings();
-					});
-				text.inputEl.style.cssText = 'width: 100%; font-family: monospace; font-size: 12px;';
+						this.display();
+					})
+			);
+
+		if (this.plugin.settings.dictionarySource === 'api') {
+			const apiNote = containerEl.createEl('p', { cls: 'setting-item-description' });
+			apiNote.appendText('Lookups go to ');
+			apiNote.createEl('code', { text: 'api.dictionaryapi.dev' });
+			apiNote.appendText('. Free public API, occasionally rate-limited — switch to Local for an offline mode.');
+		} else {
+			const dictIntro = containerEl.createEl('p', { cls: 'setting-item-description' });
+			dictIntro.appendText(
+				'Local SQLite (~23MB, ~167K English entries from Wiktionary via '
+			);
+			dictIntro.createEl('a', {
+				text: 'MattDodsonEnglish/english-dictionary',
+				href: 'https://github.com/MattDodsonEnglish/english-dictionary',
 			});
+			dictIntro.appendText('). Downloads once on first use — no network calls during normal use after that.');
+
+			const dictStatus = containerEl.createDiv();
+			dictStatus.style.cssText =
+				'padding: 10px 12px; margin: 4px 0 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+			this.renderDictionaryStatus(dictStatus);
+
+			new Setting(containerEl)
+				.setName('Dictionary download URL')
+				.setDesc('Where the dictionary SQLite is downloaded from. Override only if mirroring or using a custom build.')
+				.addText((text) => {
+					text
+						.setPlaceholder('https://…/dictionary.sqlite')
+						.setValue(this.plugin.settings.dictionaryUrl)
+						.onChange(async (value) => {
+							this.plugin.settings.dictionaryUrl = value;
+							await this.plugin.saveSettings();
+						});
+					text.inputEl.style.cssText = 'width: 100%; font-family: monospace; font-size: 12px;';
+				});
+		}
 
 		// ── Note creation ────────────────────────────────────────────
 

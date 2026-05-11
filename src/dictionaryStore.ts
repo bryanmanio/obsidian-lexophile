@@ -98,7 +98,18 @@ export class DictionaryStore {
 			throw new Error('Downloaded file does not look like a SQLite database.');
 		}
 
-		await this.app.vault.adapter.writeBinary(this.dbPath(), buf);
+		// adapter.writeBinary doesn't create parent directories — confirmed in
+		// obsidian.d.ts. The plugin folder is usually present (we run from it)
+		// but isn't guaranteed in cloud-synced vaults at the moment of write.
+		// adapter.mkdir is idempotent on Obsidian's adapter; it's safe to call
+		// repeatedly and creates intermediate segments.
+		const path = this.dbPath();
+		const parent = path.substring(0, path.lastIndexOf('/'));
+		if (parent && !(await this.app.vault.adapter.exists(parent))) {
+			await this.app.vault.adapter.mkdir(parent);
+		}
+
+		await this.app.vault.adapter.writeBinary(path, buf);
 
 		// Close any previously-loaded DB so init() picks up the new file.
 		this.close();
