@@ -1,5 +1,6 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { lookupWord, WordNotFoundError } from './dictionary';
+import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote } from './lexicon';
 import type { DictionarySettings } from './settings';
 
@@ -9,10 +10,12 @@ export class AddWordModal extends Modal {
 	private inputEl: HTMLInputElement | null = null;
 	private submitBtn: HTMLButtonElement | null = null;
 	private getSettings: () => DictionarySettings;
+	private store: DictionaryStore;
 
-	constructor(app: App, getSettings: () => DictionarySettings) {
+	constructor(app: App, getSettings: () => DictionarySettings, store: DictionaryStore) {
 		super(app);
 		this.getSettings = getSettings;
+		this.store = store;
 	}
 
 	onOpen() {
@@ -67,8 +70,17 @@ export class AddWordModal extends Modal {
 			let entry;
 			let stubbed = false;
 			try {
-				entry = await lookupWord(word);
+				entry = await lookupWord(this.store, word, settings.dictionarySource);
 			} catch (err) {
+				if (err instanceof DictionaryNotReadyError) {
+					new Notice('Lexophile: download the local dictionary in Settings → Lexophile first.');
+					this.submitting = false;
+					if (this.submitBtn) {
+						this.submitBtn.disabled = false;
+						this.submitBtn.textContent = 'Look up & save';
+					}
+					return;
+				}
 				if (err instanceof WordNotFoundError && settings.stubUnfoundWords) {
 					entry = createStubEntry(word);
 					stubbed = true;

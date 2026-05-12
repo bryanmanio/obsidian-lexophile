@@ -1,8 +1,5 @@
 import { promises as fs } from 'fs';
-import initSqlJs, { type SqlJsStatic } from 'sql.js';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — esbuild's binary loader resolves this to a Uint8Array
-import wasmBinary from 'sql.js/dist/sql-wasm.wasm';
+import { getSqlJs } from './sqlite';
 
 export interface KoboWord {
 	word: string;
@@ -19,18 +16,6 @@ const TRIM_CHARS = /^[\s.,;:!?'"`‘’“”()[\]{}<>—–\-]+|[\s.,;:!?'"`‘
 export function cleanKoboWord(text: string): string {
 	if (!text) return '';
 	return text.replace(TRIM_CHARS, '').trim();
-}
-
-let sqlJsPromise: Promise<SqlJsStatic> | null = null;
-
-// Lazy-init so plugin load is unaffected for users who never run the import.
-function getSqlJs(): Promise<SqlJsStatic> {
-	if (!sqlJsPromise) {
-		// esbuild's binary loader hands us a Uint8Array; sql.js types want
-		// ArrayBuffer but accept either at runtime. Cast through unknown.
-		sqlJsPromise = initSqlJs({ wasmBinary: wasmBinary as unknown as ArrayBuffer });
-	}
-	return sqlJsPromise;
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

@@ -1,17 +1,42 @@
 import { requestUrl } from 'obsidian';
+import { DictionaryNotReadyError, DictionaryStore } from './dictionaryStore';
 import type { WordEntry } from './lexicon';
+import type { DictionarySource } from './settings';
 
-const API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
-
-// Distinguishes "the dictionary API has no entry for this word" from genuine
-// errors (network, 5xx, malformed response). Callers can use this to decide
-// whether to fall back to a stub note.
+// Distinguishes "the dictionary has no entry for this word" from genuine
+// errors (not-ready store, network, 5xx, malformed response). Callers can
+// use this to decide whether to fall back to a stub note.
 export class WordNotFoundError extends Error {
 	constructor(public readonly word: string) {
 		super(`No definition found for "${word}".`);
 		this.name = 'WordNotFoundError';
 	}
 }
+
+export { DictionaryNotReadyError };
+
+// Dispatch to either the remote Free Dictionary API or the local SQLite,
+// based on the user's chosen source. Modal callers pass settings.dictionarySource.
+export async function lookupWord(
+	store: DictionaryStore,
+	word: string,
+	source: DictionarySource
+): Promise<WordEntry> {
+	if (source === 'api') return lookupWordViaApi(word);
+	return lookupWordViaLocal(store, word);
+}
+
+// ── Local SQLite path ───────────────────────────────────────────────
+
+function lookupWordViaLocal(store: DictionaryStore, word: string): WordEntry {
+	const result = store.lookup(word);
+	if (!result) throw new WordNotFoundError(word);
+	return result;
+}
+
+// ── Free Dictionary API path ────────────────────────────────────────
+
+const API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
 
 interface ApiPhonetic {
 	text?: string;
@@ -42,7 +67,7 @@ interface ApiEntry {
 const MAX_RETRIES = 4;
 const BASE_BACKOFF_MS = 1500;
 
-export async function lookupWord(word: string): Promise<WordEntry> {
+async function lookupWordViaApi(word: string): Promise<WordEntry> {
 	const url = API_BASE + encodeURIComponent(word.trim());
 
 	let res = await requestUrl({ url, method: 'GET', throw: false });

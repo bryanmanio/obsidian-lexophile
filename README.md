@@ -32,24 +32,27 @@ Every word becomes a note in your `Dictionary/` folder with the part of speech, 
 
 ## How it works
 
-The Chrome extension and the plugin authenticate to each other with a shared secret token (auto-generated during onboarding) so random websites can't write to your vault.
+Lookups go through one of two sources, picked in **Settings → Lexophile → Dictionary source**:
+
+- **Online (default)** — calls the free [Dictionary API](https://dictionaryapi.dev/). Zero setup, occasionally rate-limited on large batches.
+- **Local SQLite (offline)** — one-time ~23MB download to your plugin folder. Sub-millisecond lookups, no network calls after that. Data derived from [MattDodsonEnglish/english-dictionary](https://github.com/MattDodsonEnglish/english-dictionary) (CC BY-SA 3.0, sourced from Wiktionary).
 
 ```
-┌──────────────┐     definition     ┌────────────────┐
-│   Chrome     │ ←─────────────────  │  Free          │
-│  extension   │                     │  Dictionary    │
-└──────┬───────┘                     │  API           │
-       │                             └────────────────┘
-       │ POST /word
-       │ Bearer <token>
-       ▼
-┌──────────────────────────────┐
-│   Obsidian plugin            │
-│   (HTTP server on :27124)    │
-│                              │
-│   creates note in vault →    │  →  📓 Dictionary/serendipity.md
-└──────────────────────────────┘
+┌──────────────┐    POST /word    ┌────────────────────────────────┐
+│   Chrome     │ ───────────────► │   Obsidian plugin              │
+│  extension   │   Bearer <tok>   │   (HTTP server on :27124)      │
+└──────────────┘                  │                                │
+                                  │   ┌──────────────────────┐     │
+   Mass-import / Kobo / manual ►──┼──►│ Dictionary source:   │     │
+                                  │   │ • api.dictionaryapi  │     │
+                                  │   │ • local SQLite       │     │
+                                  │   └──────────────────────┘     │
+                                  │                                │
+                                  │   creates note in vault →      │  →  📓 Dictionary/serendipity.md
+                                  └────────────────────────────────┘
 ```
+
+The Chrome extension makes its own call to dictionaryapi.dev regardless of plugin source. The Chrome extension and the plugin authenticate to each other with a shared secret token (auto-generated during onboarding) so random websites can't write to your vault.
 
 ## Installation
 
@@ -70,7 +73,10 @@ Install the companion extension from the [lexophile-chrome-extension](https://gi
 
 ## Setup
 
-After installing, the Chrome extension opens a welcome tab. It auto-generates an API token; copy it and paste it into **Obsidian → Settings → Lexophile → API token**, then click the welcome page's **Test connection** button. Once it goes green, you're done.
+The plugin works out of the box — it uses the free Dictionary API by default. Two optional steps:
+
+1. *(For offline use)* In **Settings → Lexophile → Dictionary source**, switch to **Local SQLite**. The page reveals a status pill; click **Download** to fetch the dictionary file once (~23MB). The "Ready" pill confirms it loaded.
+2. *(For web capture)* The Chrome extension opens a welcome tab on install. It auto-generates an API token; copy it and paste it into **Settings → Lexophile → API token**, then click **Test connection**.
 
 ## Usage
 
@@ -109,7 +115,11 @@ Every imported word gets `source: "[[Book Name]]"` in its frontmatter. If the bo
 
 ## Privacy
 
-Everything runs on your machine. The only network call is to the [Free Dictionary API](https://dictionaryapi.dev/) (`api.dictionaryapi.dev`) to fetch the actual definition for a word. No analytics, no telemetry, no account, no cloud.
+No analytics, no telemetry, no account, no cloud.
+
+- In **Online** mode (default): the plugin calls `api.dictionaryapi.dev` to fetch each definition.
+- In **Local** mode: the only network call is the one-time dictionary download. Lookups thereafter are fully offline.
+- The Chrome extension calls `api.dictionaryapi.dev` directly when you right-click to capture — independent of the plugin's source setting.
 
 ## Development
 

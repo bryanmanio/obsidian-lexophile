@@ -1,12 +1,14 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { lookupWord, WordNotFoundError } from './dictionary';
+import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import type { DictionarySettings } from './settings';
 
-// Spacing between consecutive lookups. dictionaryapi.dev is a free public API
-// with an undocumented rate limit; ~3 req/s is safe in practice. lookupWord()
-// itself handles transient 429s by backing off and retrying.
-const RATE_LIMIT_MS = 350;
+// Spacing between consecutive lookups. The free Dictionary API rate-limits
+// faster than ~3 req/s, but local SQLite lookups are sub-millisecond — pick
+// per-import based on the user's chosen source.
+const API_DELAY_MS = 350;
+const LOCAL_YIELD_MS = 0;
 
 type State = 'input' | 'wordlist' | 'progress' | 'done';
 
@@ -63,9 +65,12 @@ export class MassImportModal extends Modal {
 	private summary: ImportSummary = { imported: 0, skipped: 0, stubbed: 0, notFound: [], errors: [] };
 	private cancelRequested = false;
 
-	constructor(app: App, getSettings: () => DictionarySettings) {
+	private store: DictionaryStore;
+
+	constructor(app: App, getSettings: () => DictionarySettings, store: DictionaryStore) {
 		super(app);
 		this.getSettings = getSettings;
+		this.store = store;
 	}
 
 	onOpen() {
@@ -137,6 +142,12 @@ export class MassImportModal extends Modal {
 
 	private parseInput() {
 		this.inputError = '';
+		const settings = this.getSettings();
+		if (settings.dictionarySource === 'local' && !this.store.isReady()) {
+			this.inputError = 'Local dictionary not loaded. Download it from Settings → Lexophile first.';
+			this.render();
+			return;
+		}
 		const words = parseWordList(this.rawInput);
 		if (words.length === 0) {
 			this.inputError = 'No words detected. Paste a comma- or newline-separated list above.';
@@ -144,7 +155,6 @@ export class MassImportModal extends Modal {
 			return;
 		}
 
-		const settings = this.getSettings();
 		this.items = words.map((word) => {
 			const dup = wordNoteExists(this.app, settings, word);
 			return { word, checked: !dup, duplicate: dup };
@@ -327,6 +337,7 @@ export class MassImportModal extends Modal {
 		this.render();
 
 		const settings = this.getSettings();
+		const delayMs = settings.dictionarySource === 'api' ? API_DELAY_MS : LOCAL_YIELD_MS;
 
 		for (let i = 0; i < queue.length; i++) {
 			if (this.cancelRequested) break;
@@ -337,7 +348,7 @@ export class MassImportModal extends Modal {
 			let entry: WordEntry;
 			let stubbed = false;
 			try {
-				entry = await lookupWord(word);
+				entry = await lookupWord(this.store, word, settings.dictionarySource);
 			} catch (err) {
 				if (err instanceof WordNotFoundError) {
 					if (this.stubUnfound) {
@@ -345,12 +356,12 @@ export class MassImportModal extends Modal {
 						stubbed = true;
 					} else {
 						this.summary.notFound.push(word);
-						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
-					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
 					continue;
 				}
 			}
@@ -365,7 +376,7 @@ export class MassImportModal extends Modal {
 				this.summary.errors.push({ word, reason: (err as Error).message });
 			}
 
-			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
 		}
 
 		this.state = 'done';
@@ -391,7 +402,7 @@ export class MassImportModal extends Modal {
 			this.renderWordListSection(
 				`${notFound.length} not found in the dictionary`,
 				notFound,
-				"These weren't in api.dictionaryapi.dev. They might be names, slang, or compounds."
+				"These words weren't found in the dictionary. They might be names, slang, compounds, or don't exist in the online dictionary we pull from."
 			);
 
 			const stubBtnWrap = this.contentEl.createDiv();

@@ -1,6 +1,7 @@
 export type NamingConvention = 'asis' | 'lowercase' | 'titlecase';
 export type DuplicateHandling = 'skip' | 'append' | 'overwrite';
 export type UnmatchedBookHandling = 'create' | 'linkOnly' | 'plainText';
+export type DictionarySource = 'api' | 'local';
 
 export interface DictionarySettings {
 	folder: string;
@@ -12,6 +13,7 @@ export interface DictionarySettings {
 	autoCreateBase: boolean;
 	baseName: string;
 	stubUnfoundWords: boolean;
+	dictionarySource: DictionarySource;
 	enableKoboImport: boolean;
 	booksFolder: string;
 	unmatchedBookHandling: UnmatchedBookHandling;
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: DictionarySettings = {
 	autoCreateBase: true,
 	baseName: '_Dictionary List',
 	stubUnfoundWords: false,
+	dictionarySource: 'api',
 	enableKoboImport: false,
 	booksFolder: 'Books',
 	unmatchedBookHandling: 'create',

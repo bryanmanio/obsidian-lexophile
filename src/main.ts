@@ -1,5 +1,6 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFolder, normalizePath } from 'obsidian';
 import { DictionaryServer } from './server';
+import { DEFAULT_DICTIONARY_URL, DictionaryStore } from './dictionaryStore';
 import { AddWordModal } from './wordModal';
 import { KoboImportModal } from './koboImportModal';
 import { MassImportModal } from './massImportModal';
@@ -9,10 +10,20 @@ import type { DictionarySettings } from './settings';
 
 export default class DictionaryPlugin extends Plugin {
 	settings: DictionarySettings;
+	store: DictionaryStore;
 	private server: DictionaryServer;
 
 	async onload() {
 		await this.loadSettings();
+
+		this.store = new DictionaryStore(this.app, this);
+		// Eager-load is best-effort: a missing file just leaves the store in
+		// "not ready" mode, which the settings tab and import modals handle.
+		try {
+			await this.store.init();
+		} catch (err) {
+			console.error('[Lexophile] dictionary init failed:', err);
+		}
 
 		this.server = new DictionaryServer(
 			this.app,
@@ -28,7 +39,7 @@ export default class DictionaryPlugin extends Plugin {
 			id: 'add-word',
 			name: 'Add word to lexicon',
 			callback: () => {
-				new AddWordModal(this.app, () => this.settings).open();
+				new AddWordModal(this.app, () => this.settings, this.store).open();
 			},
 		});
 
@@ -36,7 +47,7 @@ export default class DictionaryPlugin extends Plugin {
 			id: 'mass-import',
 			name: 'Mass-import words from a list',
 			callback: () => {
-				new MassImportModal(this.app, () => this.settings).open();
+				new MassImportModal(this.app, () => this.settings, this.store).open();
 			},
 		});
 
@@ -48,7 +59,7 @@ export default class DictionaryPlugin extends Plugin {
 					new Notice('Lexophile: enable Kobo import in Settings → Lexophile first.');
 					return;
 				}
-				new KoboImportModal(this.app, () => this.settings).open();
+				new KoboImportModal(this.app, () => this.settings, this.store).open();
 			},
 		});
 
@@ -64,6 +75,7 @@ export default class DictionaryPlugin extends Plugin {
 
 	async onunload() {
 		await this.stopServer();
+		this.store?.close();
 	}
 
 	async startServer() {
@@ -121,6 +133,39 @@ class DictionarySettingTab extends PluginSettingTab {
 		fromBrowser.appendText('From the web: install the Lexophile Chrome extension, highlight a word, right-click, and choose ');
 		fromBrowser.createEl('strong', { text: 'Add "<word>" to Lexophile' });
 		fromBrowser.appendText('.');
+
+		// ── Dictionary source ────────────────────────────────────────
+
+		new Setting(containerEl)
+			.setName('Dictionary source')
+			.setDesc('Online uses the free Dictionary API. Local downloads ~23MB once and works offline.')
+			.addDropdown((drop) =>
+				drop
+					.addOption('api', 'Online (Free Dictionary API)')
+					.addOption('local', 'Local (offline)')
+					.setValue(this.plugin.settings.dictionarySource)
+					.onChange(async (value) => {
+						this.plugin.settings.dictionarySource = value as DictionarySettings['dictionarySource'];
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		if (this.plugin.settings.dictionarySource === 'local') {
+			const dictStatus = containerEl.createDiv();
+			dictStatus.style.cssText =
+				'padding: 10px 12px; margin: 4px 0 8px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+			this.renderDictionaryStatus(dictStatus);
+
+			const credit = containerEl.createEl('p', { cls: 'setting-item-description' });
+			credit.style.cssText = 'margin-bottom: 18px;';
+			credit.appendText('Data: ~167K English entries from Wiktionary via ');
+			credit.createEl('a', {
+				text: 'MattDodsonEnglish/english-dictionary',
+				href: 'https://github.com/MattDodsonEnglish/english-dictionary',
+			});
+			credit.appendText('.');
+		}
 
 		// ── Note creation ────────────────────────────────────────────
 
@@ -375,5 +420,58 @@ class DictionarySettingTab extends PluginSettingTab {
 		bmcImg.src = 'https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png';
 		bmcImg.alt = 'Buy Me A Coffee';
 		bmcImg.style.cssText = 'height: 40px; width: auto; border-radius: 8px;';
+	}
+
+	// Renders the dictionary status pill + download/redownload button into the
+	// given container. Kept on the settings tab class so it can re-render
+	// itself after a download finishes without rebuilding the whole pane.
+	private async renderDictionaryStatus(container: HTMLElement) {
+		container.empty();
+
+		const status = await this.plugin.store.status();
+
+		const row = container.createDiv();
+		row.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+
+		const pill = row.createSpan();
+		pill.style.cssText = 'font-weight: 600; padding: 2px 10px; border-radius: 12px; font-size: 12px;';
+		if (status.ready) {
+			pill.style.background = 'var(--background-modifier-success)';
+			pill.style.color = 'var(--text-on-accent)';
+			pill.textContent = 'Ready';
+		} else if (status.sizeBytes !== null) {
+			pill.style.background = 'var(--background-modifier-border)';
+			pill.style.color = 'var(--text-muted)';
+			pill.textContent = 'Downloaded, not loaded';
+		} else {
+			pill.style.background = 'var(--background-modifier-error)';
+			pill.style.color = 'var(--text-on-accent)';
+			pill.textContent = 'Not downloaded';
+		}
+
+		const detail = row.createDiv();
+		detail.style.cssText = 'flex: 1; color: var(--text-muted); font-size: 12px;';
+		if (status.ready && status.entryCount !== null) {
+			const mb = status.sizeBytes ? (status.sizeBytes / 1024 / 1024).toFixed(1) : '?';
+			detail.textContent = `${status.entryCount.toLocaleString()} entries · ${mb}MB on disk`;
+		} else {
+			detail.textContent = 'Click Download to fetch the dictionary file.';
+		}
+
+		const btn = row.createEl('button');
+		btn.textContent = status.ready ? 'Re-download' : 'Download';
+		if (status.ready) btn.style.background = 'transparent';
+		btn.addEventListener('click', async () => {
+			btn.disabled = true;
+			btn.textContent = 'Downloading…';
+			try {
+				await this.plugin.store.download(DEFAULT_DICTIONARY_URL);
+				new Notice('Lexophile: dictionary downloaded and loaded.');
+			} catch (err) {
+				new Notice(`Lexophile: download failed — ${(err as Error).message}`);
+			} finally {
+				await this.renderDictionaryStatus(container);
+			}
+		});
 	}
 }
