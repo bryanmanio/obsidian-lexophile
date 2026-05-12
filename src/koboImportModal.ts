@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { fileExists, readKoboWords, type KoboWord } from './kobo';
 import { lookupWord, WordNotFoundError } from './dictionary';
-import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
+import { type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import { bookNoteExists, cleanBookTitle, ensureBookStub, titleCase } from './books';
 import type { DictionarySettings } from './settings';
@@ -52,7 +52,6 @@ export class KoboImportModal extends Modal {
 	private items: WordItem[] = [];
 	private searchQuery = '';
 	private listEl: HTMLElement | null = null;
-	private countEl: HTMLElement | null = null;
 	private importBtn: HTMLButtonElement | null = null;
 
 	// Per-import override of settings.stubUnfoundWords. Initialized from
@@ -74,7 +73,7 @@ export class KoboImportModal extends Modal {
 	}
 
 	onOpen() {
-		this.modalEl.style.maxWidth = '720px';
+		this.modalEl.addClass('lex-modal-wide');
 		this.render();
 	}
 
@@ -109,25 +108,22 @@ export class KoboImportModal extends Modal {
 					.setPlaceholder(DEFAULT_KOBO_PATH)
 					.setValue(this.filePath)
 					.onChange((v) => (this.filePath = v));
-				text.inputEl.style.fontFamily = 'monospace';
-				text.inputEl.style.fontSize = '12px';
+				text.inputEl.addClass('lex-path-input');
 			});
 
 		if (this.pathError) {
-			const err = this.contentEl.createEl('p');
-			err.style.cssText = 'color: var(--text-error); font-size: 13px; margin-top: 4px;';
-			err.textContent = this.pathError;
+			this.contentEl.createEl('p', { text: this.pathError, cls: 'lex-error-line' });
 		}
 
 		new Setting(this.contentEl)
 			.addButton((btn) => btn.setButtonText('Cancel').onClick(() => this.close()))
-			.addButton((btn) =>
+			.addButton((btn) => {
 				btn
 					.setButtonText(this.reading ? 'Reading…' : 'Read words')
 					.setCta()
-					.setDisabled(this.reading)
-					.onClick(() => void this.readWords())
-			);
+					.onClick(() => void this.readWords());
+				btn.buttonEl.disabled = this.reading;
+			});
 	}
 
 	private async readWords() {
@@ -193,9 +189,7 @@ export class KoboImportModal extends Modal {
 		}
 		desc.appendText('Sources will link to the book each word came from.');
 
-		const stubOpt = this.contentEl.createDiv();
-		stubOpt.style.cssText =
-			'display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+		const stubOpt = this.contentEl.createDiv({ cls: 'lex-stub-option lex-stub-option--inline' });
 		const stubCheckbox = stubOpt.createEl('input');
 		stubCheckbox.type = 'checkbox';
 		stubCheckbox.id = 'lex-kobo-stub';
@@ -203,30 +197,24 @@ export class KoboImportModal extends Modal {
 		stubCheckbox.addEventListener('change', () => {
 			this.stubUnfound = stubCheckbox.checked;
 		});
-		const stubLabel = stubOpt.createEl('label');
+		const stubLabel = stubOpt.createEl('label', { cls: 'lex-stub-option-label' });
 		stubLabel.htmlFor = 'lex-kobo-stub';
-		stubLabel.style.cssText = 'cursor: pointer; flex: 1;';
 		stubLabel.appendText('Create stub notes for words not found in the dictionary');
-		const stubHint = stubOpt.createEl('span');
-		stubHint.style.cssText = 'color: var(--text-muted); font-size: 12px;';
-		stubHint.textContent = '(names, slang, technical terms)';
+		stubOpt.createEl('span', { cls: 'lex-stub-option-hint', text: '(names, slang, technical terms)' });
 
 		// Toolbar: search + select-all + count
-		const toolbar = this.contentEl.createDiv();
-		toolbar.style.cssText = 'display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;';
+		const toolbar = this.contentEl.createDiv({ cls: 'lex-toolbar' });
 
-		const searchEl = toolbar.createEl('input');
+		const searchEl = toolbar.createEl('input', { cls: 'lex-toolbar-search' });
 		searchEl.type = 'text';
 		searchEl.placeholder = 'Search words…';
-		searchEl.style.cssText = 'flex: 1; padding: 6px 10px; font-size: 13px;';
 		searchEl.value = this.searchQuery;
 		searchEl.addEventListener('input', () => {
 			this.searchQuery = searchEl.value;
 			this.refreshList();
 		});
 
-		const allBtn = toolbar.createEl('button');
-		allBtn.textContent = 'Select all';
+		const allBtn = toolbar.createEl('button', { text: 'Select all' });
 		allBtn.addEventListener('click', () => {
 			const visible = this.visibleItems();
 			const allOn = visible.every((i) => i.checked);
@@ -234,17 +222,14 @@ export class KoboImportModal extends Modal {
 			this.refreshList();
 		});
 
-		const noneBtn = toolbar.createEl('button');
-		noneBtn.textContent = 'Clear';
+		const noneBtn = toolbar.createEl('button', { text: 'Clear' });
 		noneBtn.addEventListener('click', () => {
 			for (const item of this.visibleItems()) item.checked = false;
 			this.refreshList();
 		});
 
 		// List
-		this.listEl = this.contentEl.createDiv();
-		this.listEl.style.cssText =
-			'max-height: 380px; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px;';
+		this.listEl = this.contentEl.createDiv({ cls: 'lex-wordlist' });
 
 		this.refreshList();
 
@@ -285,19 +270,15 @@ export class KoboImportModal extends Modal {
 		const visible = this.visibleItems();
 
 		if (visible.length === 0) {
-			const empty = this.listEl.createDiv();
-			empty.style.cssText = 'padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;';
-			empty.textContent = 'No words match.';
+			this.listEl.createDiv({ cls: 'lex-wordlist-empty', text: 'No words match.' });
 			this.updateImportButtonLabel();
 			return;
 		}
 
 		for (const item of visible) {
-			const row = this.listEl.createDiv();
 			// CSS grid keeps every column aligned regardless of which rows
 			// have the "already saved" tag.
-			row.style.cssText =
-				'display: grid; grid-template-columns: auto 1fr 220px 110px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
+			const row = this.listEl.createDiv({ cls: 'lex-row' });
 			row.addEventListener('click', (e) => {
 				if ((e.target as HTMLElement).tagName === 'INPUT') return;
 				item.checked = !item.checked;
@@ -312,28 +293,17 @@ export class KoboImportModal extends Modal {
 				this.updateImportButtonLabel();
 			});
 
-			const word = row.createDiv();
-			word.style.cssText = 'font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-			word.textContent = item.kobo.word;
-			if (item.duplicate) {
-				word.style.color = 'var(--text-muted)';
-				word.style.textDecoration = 'line-through';
-			}
+			const wordCls = item.duplicate ? 'lex-row-word lex-row-word--duplicate' : 'lex-row-word';
+			row.createDiv({ cls: wordCls, text: item.kobo.word });
 
-			const book = row.createDiv();
-			book.style.cssText =
-				'color: var(--text-muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+			const book = row.createDiv({ cls: 'lex-row-book' });
 			book.textContent = item.bookName || '(no book)';
 			book.title = item.bookName || '(no book)';
 
 			// Always-present tag cell so the column grid stays aligned across rows.
-			const tagCell = row.createDiv();
-			tagCell.style.cssText = 'text-align: right;';
+			const tagCell = row.createDiv({ cls: 'lex-row-tag-cell' });
 			if (item.duplicate) {
-				const pill = tagCell.createSpan();
-				pill.style.cssText =
-					'font-size: 11px; padding: 2px 8px; background: var(--background-modifier-border); border-radius: 10px; color: var(--text-muted); white-space: nowrap;';
-				pill.textContent = 'already saved';
+				tagCell.createSpan({ cls: 'lex-row-tag-pill', text: 'already saved' });
 			}
 		}
 
@@ -353,10 +323,10 @@ export class KoboImportModal extends Modal {
 
 	private renderProgressState() {
 		this.contentEl.createEl('h3', { text: 'Importing…' });
-		this.progressEl = this.contentEl.createEl('p');
-		this.progressEl.style.cssText =
-			'font-family: monospace; font-size: 13px; padding: 8px 0; color: var(--text-muted);';
-		this.progressEl.textContent = this.progressLine || 'Starting…';
+		this.progressEl = this.contentEl.createEl('p', {
+			cls: 'lex-progress',
+			text: this.progressLine || 'Starting…',
+		});
 	}
 
 	private updateProgressLine(line: string) {
@@ -404,13 +374,13 @@ export class KoboImportModal extends Modal {
 					} else {
 						this.summary.notFound.push({ word, source });
 						console.warn(`[Lexophile] "${word}": not found`);
-						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+						if (i < queue.length - 1) await new Promise((r) => window.setTimeout(r, delayMs));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
 					console.warn(`[Lexophile] "${word}":`, (err as Error).message);
-					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+					if (i < queue.length - 1) await new Promise((r) => window.setTimeout(r, delayMs));
 					continue;
 				}
 			}
@@ -426,7 +396,7 @@ export class KoboImportModal extends Modal {
 			}
 
 			if (i < queue.length - 1) {
-				await new Promise((r) => setTimeout(r, delayMs));
+				await new Promise((r) => window.setTimeout(r, delayMs));
 			}
 		}
 
@@ -465,13 +435,16 @@ export class KoboImportModal extends Modal {
 
 		const { imported, skipped, stubbed, notFound, errors } = this.summary;
 
-		const totals = this.contentEl.createEl('p');
-		totals.style.cssText = 'font-size: 14px; line-height: 1.6;';
-		const totalLines: string[] = [];
-		totalLines.push(`✓ Imported ${imported} word${imported === 1 ? '' : 's'}`);
-		if (stubbed) totalLines.push(`✎ Created ${stubbed} stub${stubbed === 1 ? '' : 's'} for unknown words`);
-		if (skipped) totalLines.push(`${skipped} already in your lexicon (skipped)`);
-		totals.innerHTML = totalLines.map((l) => `• ${l}`).join('<br>');
+		const totals = this.contentEl.createEl('ul', { cls: 'lex-totals' });
+		totals.createEl('li', { text: `✓ Imported ${imported} word${imported === 1 ? '' : 's'}` });
+		if (stubbed) {
+			totals.createEl('li', {
+				text: `✎ Created ${stubbed} stub${stubbed === 1 ? '' : 's'} for unknown words`,
+			});
+		}
+		if (skipped) {
+			totals.createEl('li', { text: `${skipped} already in your lexicon (skipped)` });
+		}
 
 		if (notFound.length > 0) {
 			const words = notFound.map((n) => n.word);
@@ -481,11 +454,13 @@ export class KoboImportModal extends Modal {
 				"These words weren't found in the dictionary. They might be names, slang, compounds, or don't exist in the online dictionary we pull from."
 			);
 
-			const stubBtnWrap = this.contentEl.createDiv();
-			stubBtnWrap.style.cssText = 'margin-top: 8px;';
-			const stubBtn = stubBtnWrap.createEl('button');
-			stubBtn.textContent = `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? '' : 's'}`;
-			stubBtn.addEventListener('click', () => void this.stubNotFound(stubBtn));
+			const stubBtnWrap = this.contentEl.createDiv({ cls: 'lex-done-stub-btn-wrap' });
+			const stubBtn = stubBtnWrap.createEl('button', {
+				text: `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? '' : 's'}`,
+			});
+			stubBtn.addEventListener('click', () => {
+				void this.stubNotFound(stubBtn);
+			});
 		}
 
 		if (errors.length > 0) {
@@ -540,36 +515,27 @@ export class KoboImportModal extends Modal {
 	}
 
 	private renderWordListSection(title: string, words: string[], hint: string) {
-		const wrap = this.contentEl.createDiv();
-		wrap.style.cssText = 'margin-top: 16px;';
+		const wrap = this.contentEl.createDiv({ cls: 'lex-done-section' });
+		wrap.createEl('h4', { cls: 'lex-done-heading', text: title });
+		wrap.createEl('p', { cls: 'setting-item-description lex-done-hint', text: hint });
 
-		const heading = wrap.createEl('h4', { text: title });
-		heading.style.cssText = 'margin: 0 0 4px; font-size: 13px; font-weight: 600;';
-
-		const hintEl = wrap.createEl('p', { text: hint, cls: 'setting-item-description' });
-		hintEl.style.cssText = 'margin: 0 0 8px;';
-
-		const list = wrap.createDiv();
-		list.style.cssText =
-			'max-height: 160px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: var(--font-monospace, monospace);';
+		const list = wrap.createDiv({ cls: 'lex-done-list' });
 		for (const word of words) {
-			const row = list.createDiv();
-			row.style.cssText = 'padding: 2px 0;';
-			row.textContent = word;
+			list.createDiv({ cls: 'lex-done-list-row', text: word });
 		}
 
-		const copyBtn = wrap.createEl('button');
-		copyBtn.textContent = 'Copy list';
-		copyBtn.style.cssText = 'margin-top: 8px;';
-		copyBtn.addEventListener('click', async () => {
-			try {
-				await navigator.clipboard.writeText(words.join('\n'));
-				const original = copyBtn.textContent;
-				copyBtn.textContent = 'Copied!';
-				setTimeout(() => (copyBtn.textContent = original), 1500);
-			} catch {
-				new Notice('Could not copy to clipboard.');
-			}
+		const copyBtn = wrap.createEl('button', { cls: 'lex-done-copy-btn', text: 'Copy list' });
+		copyBtn.addEventListener('click', () => {
+			void (async () => {
+				try {
+					await navigator.clipboard.writeText(words.join('\n'));
+					const original = copyBtn.textContent;
+					copyBtn.textContent = 'Copied!';
+					window.setTimeout(() => (copyBtn.textContent = original), 1500);
+				} catch {
+					new Notice('Could not copy to clipboard.');
+				}
+			})();
 		});
 	}
 }

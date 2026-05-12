@@ -10,7 +10,6 @@
 	"devDependencies": {
 		"@types/node": "^20.0.0",
 		"@types/sql.js": "^1.4.11",
-		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.20.0",
 		"obsidian": "latest",
 		"sql.js": "^1.14.1",

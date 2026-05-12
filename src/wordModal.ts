@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { lookupWord, WordNotFoundError } from './dictionary';
 import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
-import { createStubEntry, createWordNote } from './lexicon';
+import { createStubEntry, createWordNote, type WordEntry } from './lexicon';
 import type { DictionarySettings } from './settings';
 
 export class AddWordModal extends Modal {
@@ -67,7 +67,7 @@ export class AddWordModal extends Modal {
 
 		const settings = this.getSettings();
 		try {
-			let entry;
+			let entry: WordEntry;
 			let stubbed = false;
 			try {
 				entry = await lookupWord(this.store, word, settings.dictionarySource);

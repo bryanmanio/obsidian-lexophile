@@ -114,7 +114,7 @@ export class DictionaryServer {
 		let entry: WordEntry;
 
 		try {
-			entry = JSON.parse(body);
+			entry = JSON.parse(body) as WordEntry;
 		} catch {
 			res.writeHead(400, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ error: 'Invalid JSON' }));
@@ -135,11 +135,9 @@ export class DictionaryServer {
 
 	private readBody(req: http.IncomingMessage): Promise<string> {
 		return new Promise((resolve, reject) => {
-			let body = '';
-			req.on('data', (chunk) => {
-				body += chunk.toString();
-			});
-			req.on('end', () => resolve(body));
+			const chunks: Buffer[] = [];
+			req.on('data', (chunk: Buffer) => chunks.push(chunk));
+			req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
 			req.on('error', reject);
 		});
 	}

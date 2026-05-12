@@ -1,9 +1,14 @@
 import esbuild from 'esbuild';
+import { builtinModules } from 'module';
 import process from 'process';
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { copyFile, mkdir } from 'fs/promises';
-import builtins from 'builtin-modules';
+
+// Node built-ins to mark external in the bundle. We use `module.builtinModules`
+// from Node core instead of the third-party `builtin-modules` package — same
+// data, no extra dependency.
+const builtins = builtinModules;
 
 const prod = process.argv[2] === 'production';
 

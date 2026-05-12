@@ -11,7 +11,7 @@ export interface KoboWord {
 // that often come from imprecise highlighting on the device — "serendipity,"
 // becomes "serendipity", "(book." becomes "book". Internal punctuation
 // (apostrophes in "don't", hyphens in "well-being") is preserved.
-const TRIM_CHARS = /^[\s.,;:!?'"`‘’“”()[\]{}<>—–\-]+|[\s.,;:!?'"`‘’“”()[\]{}<>—–\-]+$/g;
+const TRIM_CHARS = /^[\s.,;:!?'"`‘’“”()[\]{}<>—–-]+|[\s.,;:!?'"`‘’“”()[\]{}<>—–-]+$/g;
 
 export function cleanKoboWord(text: string): string {
 	if (!text) return '';
@@ -43,7 +43,7 @@ export async function readKoboWords(filePath: string): Promise<KoboWord[]> {
 	}
 
 	// SQLite files start with the literal "SQLite format 3\0".
-	if (buf.length < 16 || buf.slice(0, 15).toString('utf8') !== 'SQLite format 3') {
+	if (buf.length < 16 || buf.subarray(0, 15).toString('utf8') !== 'SQLite format 3') {
 		throw new Error('That file is not a SQLite database.');
 	}
 
