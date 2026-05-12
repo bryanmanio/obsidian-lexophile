@@ -1,6 +1,6 @@
 {
 	"name": "lexophile",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "Build your vocabulary one word at a time. Add manually, or grab it instantly with the Chrome extension.",
 	"main": "main.js",
 	"scripts": {

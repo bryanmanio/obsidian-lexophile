@@ -4102,10 +4102,12 @@ var DictionaryPlugin = class extends import_obsidian11.Plugin {
       }
     });
   }
-  async onunload() {
-    var _a;
-    await this.stopServer();
-    (_a = this.store) == null ? void 0 : _a.close();
+  onunload() {
+    void (async () => {
+      var _a;
+      await this.stopServer();
+      (_a = this.store) == null ? void 0 : _a.close();
+    })();
   }
   async startServer() {
     try {

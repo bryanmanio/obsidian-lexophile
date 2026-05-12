@@ -75,9 +75,13 @@ export default class DictionaryPlugin extends Plugin {
 		});
 	}
 
-	async onunload() {
-		await this.stopServer();
-		this.store?.close();
+	onunload() {
+		// Plugin.onunload is typed `void`, so kick async cleanup off as
+		// fire-and-forget. Obsidian doesn't wait on this promise anyway.
+		void (async () => {
+			await this.stopServer();
+			this.store?.close();
+		})();
 	}
 
 	async startServer() {
