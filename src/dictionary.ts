@@ -74,7 +74,7 @@ async function lookupWordViaApi(word: string): Promise<WordEntry> {
 	let attempt = 0;
 	while ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
 		const delay = BASE_BACKOFF_MS * Math.pow(2, attempt);
-		await new Promise((r) => setTimeout(r, delay));
+		await new Promise((r) => window.setTimeout(r, delay));
 		attempt++;
 		res = await requestUrl({ url, method: 'GET', throw: false });
 	}

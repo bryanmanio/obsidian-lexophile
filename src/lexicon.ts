@@ -79,7 +79,9 @@ export async function createWordNote(
 			return { created: false, path: filePath, action: 'appended' };
 		}
 
-		await vault.delete(existing);
+		// Use fileManager.trashFile so it respects the user's deletion preference
+		// (system trash, vault trash, or permanent), per Obsidian guidelines.
+		await app.fileManager.trashFile(existing);
 	}
 
 	await vault.create(filePath, renderEntry(entry, settings, true));
@@ -89,9 +91,8 @@ export async function createWordNote(
 	return { created: true, path: filePath, action };
 }
 
-// Walks the path and creates each missing segment. `vault.createFolder` accepts
-// nested paths, but only when the parent chain exists or it can create them
-// recursively — being explicit avoids edge cases on cloud-synced vaults.
+// Walks the path and creates each missing segment via the vault adapter,
+// which works for both regular vault content and config-dir paths.
 async function ensureFolder(app: App, folderPath: string): Promise<void> {
 	const parts = folderPath.split('/').filter(Boolean);
 	let current = '';
@@ -99,7 +100,7 @@ async function ensureFolder(app: App, folderPath: string): Promise<void> {
 		current = current ? `${current}/${part}` : part;
 		const existing = app.vault.getAbstractFileByPath(current);
 		if (!existing) {
-			await app.vault.createFolder(current);
+			await app.vault.adapter.mkdir(current);
 		} else if (!(existing instanceof TFolder)) {
 			throw new Error(`"${current}" exists but is not a folder.`);
 		}
@@ -144,8 +145,10 @@ function substitute(
 	values: Record<string, string>,
 	transform: (s: string) => string
 ): string {
-	return text.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-		if (key in values) return transform(values[key]);
+	return text.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
+		if (Object.prototype.hasOwnProperty.call(values, key)) {
+			return transform(values[key]);
+		}
 		return match;
 	});
 }

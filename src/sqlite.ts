@@ -1,6 +1,7 @@
 import initSqlJs, { type SqlJsStatic } from 'sql.js';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — esbuild's binary loader resolves this to a Uint8Array
+// esbuild's `binary` loader resolves this .wasm import to a Uint8Array at
+// build time. A matching declaration in src/types.d.ts gives TypeScript the
+// right shape so we don't need a ts-ignore here.
 import wasmBinary from 'sql.js/dist/sql-wasm.wasm';
 
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;

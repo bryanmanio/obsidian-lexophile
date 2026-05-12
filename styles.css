@@ -1,0 +1,278 @@
+/*
+ * Lexophile styles. Class names are prefixed with `lex-` and avoid raw
+ * color values so themes (dark/light/custom) take precedence. Anything
+ * that needs to override Obsidian variables is documented inline.
+ */
+
+/* ── Settings tab ─────────────────────────────────────────────────── */
+
+.lex-usage-callout {
+	background: var(--background-modifier-active-hover);
+	border-left: 3px solid var(--interactive-accent);
+	padding: 12px 14px;
+	border-radius: 4px;
+	margin-bottom: 18px;
+	color: var(--text-normal);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.lex-usage-callout ul {
+	margin: 8px 0 0;
+	padding-left: 20px;
+}
+
+.lex-dict-status {
+	padding: 10px 12px;
+	margin: 4px 0 8px;
+	background: var(--background-secondary);
+	border-radius: 6px;
+	font-size: 13px;
+}
+
+.lex-dict-status-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.lex-dict-status-pill {
+	font-weight: 600;
+	padding: 2px 10px;
+	border-radius: 12px;
+	font-size: 12px;
+}
+
+.lex-dict-status-pill--ready {
+	background: var(--background-modifier-success);
+	color: var(--text-on-accent);
+}
+
+.lex-dict-status-pill--pending {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+.lex-dict-status-pill--missing {
+	background: var(--background-modifier-error);
+	color: var(--text-on-accent);
+}
+
+.lex-dict-status-detail {
+	flex: 1;
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.lex-dict-status-button--ready {
+	background: transparent;
+}
+
+.lex-dict-credit {
+	margin-bottom: 18px;
+}
+
+.lex-template-textarea {
+	width: 100%;
+	font-family: var(--font-monospace, monospace);
+	font-size: 12px;
+	resize: vertical;
+}
+
+.lex-template-wrap {
+	margin-bottom: 8px;
+}
+
+.lex-bmc-link {
+	margin-top: 14px;
+}
+
+.lex-bmc-img {
+	height: 40px;
+	width: auto;
+	border-radius: 8px;
+}
+
+/* ── Shared modal pieces (mass-import + Kobo) ─────────────────────── */
+
+.lex-modal-wide {
+	max-width: 720px;
+}
+
+.lex-stub-option {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 10px 0;
+	padding: 8px 12px;
+	background: var(--background-secondary);
+	border-radius: 6px;
+	font-size: 13px;
+}
+
+.lex-stub-option--inline {
+	margin: 10px 0 0;
+}
+
+.lex-stub-option-label {
+	cursor: pointer;
+	flex: 1;
+}
+
+.lex-stub-option-hint {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.lex-error-line {
+	color: var(--text-error);
+	font-size: 13px;
+	margin-top: 4px;
+}
+
+.lex-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 12px 0 8px;
+}
+
+.lex-toolbar-search {
+	flex: 1;
+	padding: 6px 10px;
+	font-size: 13px;
+}
+
+.lex-wordlist {
+	max-height: 380px;
+	overflow-y: auto;
+	margin-bottom: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+}
+
+.lex-wordlist--narrow {
+	max-height: 360px;
+}
+
+.lex-wordlist-empty {
+	padding: 24px;
+	text-align: center;
+	color: var(--text-muted);
+	font-size: 13px;
+}
+
+.lex-row {
+	display: grid;
+	grid-template-columns: auto 1fr 220px 110px;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+}
+
+.lex-row--mass {
+	grid-template-columns: auto 1fr 110px;
+}
+
+.lex-row-word {
+	font-size: 14px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.lex-row-word--duplicate {
+	color: var(--text-muted);
+	text-decoration: line-through;
+}
+
+.lex-row-book {
+	color: var(--text-muted);
+	font-size: 12px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.lex-row-tag-cell {
+	text-align: right;
+}
+
+.lex-row-tag-pill {
+	font-size: 11px;
+	padding: 2px 8px;
+	background: var(--background-modifier-border);
+	border-radius: 10px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.lex-progress {
+	font-family: var(--font-monospace, monospace);
+	font-size: 13px;
+	padding: 8px 0;
+	color: var(--text-muted);
+}
+
+.lex-totals {
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.lex-done-section {
+	margin-top: 16px;
+}
+
+.lex-done-heading {
+	margin: 0 0 4px;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.lex-done-hint {
+	margin: 0 0 8px;
+}
+
+.lex-done-list {
+	max-height: 160px;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 6px 10px;
+	font-size: 13px;
+	font-family: var(--font-monospace, monospace);
+}
+
+.lex-done-list-row {
+	padding: 2px 0;
+}
+
+.lex-done-copy-btn {
+	margin-top: 8px;
+}
+
+.lex-done-stub-btn-wrap {
+	margin-top: 8px;
+}
+
+/* ── Modal-specific (path input) ──────────────────────────────────── */
+
+.lex-path-input {
+	font-family: var(--font-monospace, monospace);
+	font-size: 12px;
+}
+
+/* ── Mass-import textarea ─────────────────────────────────────────── */
+
+.lex-mass-input {
+	width: 100%;
+	font-family: var(--font-monospace, monospace);
+	font-size: 13px;
+	padding: 10px;
+	margin-bottom: 8px;
+	resize: vertical;
+}

@@ -9,9 +9,9 @@ import { DEFAULT_SETTINGS, DEFAULT_TEMPLATE } from './settings';
 import type { DictionarySettings } from './settings';
 
 export default class DictionaryPlugin extends Plugin {
-	settings: DictionarySettings;
-	store: DictionaryStore;
-	private server: DictionaryServer;
+	settings!: DictionarySettings;
+	store!: DictionaryStore;
+	private server!: DictionaryServer;
 
 	async onload() {
 		await this.loadSettings();
@@ -66,9 +66,11 @@ export default class DictionaryPlugin extends Plugin {
 		this.addCommand({
 			id: 'restart-server',
 			name: 'Restart local server',
-			callback: async () => {
-				await this.stopServer();
-				await this.startServer();
+			callback: () => {
+				void (async () => {
+					await this.stopServer();
+					await this.startServer();
+				})();
 			},
 		});
 	}
@@ -95,7 +97,8 @@ export default class DictionaryPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const stored = (await this.loadData()) as Partial<DictionarySettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
 	}
 
 	async saveSettings() {
@@ -115,16 +118,11 @@ class DictionarySettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl('h2', { text: 'Lexophile' });
-
 		// ── How to add words ─────────────────────────────────────────
 
-		const usage = containerEl.createDiv({ cls: 'lexophile-usage' });
-		usage.style.cssText =
-			'background:#f5f0fc; border-left:3px solid #7d53dc; padding:12px 14px; border-radius:4px; margin-bottom:18px; color:#3d2a6f; font-size:13px; line-height:1.5;';
+		const usage = containerEl.createDiv({ cls: 'lex-usage-callout' });
 		usage.createEl('strong', { text: 'How to add words' });
 		const list = usage.createEl('ul');
-		list.style.cssText = 'margin:8px 0 0; padding-left:20px;';
 		const fromObsidian = list.createEl('li');
 		fromObsidian.appendText('From Obsidian: open the command palette and run ');
 		fromObsidian.createEl('strong', { text: 'Lexophile: Add word to lexicon' });
@@ -152,13 +150,10 @@ class DictionarySettingTab extends PluginSettingTab {
 			);
 
 		if (this.plugin.settings.dictionarySource === 'local') {
-			const dictStatus = containerEl.createDiv();
-			dictStatus.style.cssText =
-				'padding: 10px 12px; margin: 4px 0 8px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
-			this.renderDictionaryStatus(dictStatus);
+			const dictStatus = containerEl.createDiv({ cls: 'lex-dict-status' });
+			void this.renderDictionaryStatus(dictStatus);
 
-			const credit = containerEl.createEl('p', { cls: 'setting-item-description' });
-			credit.style.cssText = 'margin-bottom: 18px;';
+			const credit = containerEl.createEl('p', { cls: 'setting-item-description lex-dict-credit' });
 			credit.appendText('Data: ~167K English entries from Wiktionary via ');
 			credit.createEl('a', {
 				text: 'MattDodsonEnglish/english-dictionary',
@@ -252,7 +247,7 @@ class DictionarySettingTab extends PluginSettingTab {
 
 		// ── Kobo eReader import ──────────────────────────────────────
 
-		containerEl.createEl('h3', { text: 'Kobo eReader import' });
+		new Setting(containerEl).setName('Kobo eReader import').setHeading();
 
 		const koboIntro = containerEl.createEl('p', { cls: 'setting-item-description' });
 		koboIntro.appendText('Import words you saved on your Kobo. Plug your Kobo into your computer, then run ');
@@ -328,7 +323,7 @@ class DictionarySettingTab extends PluginSettingTab {
 
 		// ── Server ───────────────────────────────────────────────────
 
-		containerEl.createEl('h3', { text: 'Local server' });
+		new Setting(containerEl).setName('Local server').setHeading();
 
 		new Setting(containerEl)
 			.setName('Port')
@@ -372,23 +367,20 @@ class DictionarySettingTab extends PluginSettingTab {
 
 		// ── Template ─────────────────────────────────────────────────
 
-		containerEl.createEl('h3', { text: 'Note template' });
+		new Setting(containerEl).setName('Note template').setHeading();
 
 		containerEl.createEl('p', {
 			text: 'Variables: {{word}}, {{partOfSpeech}}, {{definition}}, {{example}}, {{date}}, {{source}}',
 			cls: 'setting-item-description',
 		});
 
-		const textareaWrap = containerEl.createDiv();
-		textareaWrap.style.marginBottom = '8px';
-
-		const textarea = textareaWrap.createEl('textarea');
+		const textareaWrap = containerEl.createDiv({ cls: 'lex-template-wrap' });
+		const textarea = textareaWrap.createEl('textarea', { cls: 'lex-template-textarea' });
 		textarea.rows = 16;
 		textarea.value = this.plugin.settings.template;
-		textarea.style.cssText = 'width:100%; font-family:monospace; font-size:12px; resize:vertical;';
-		textarea.addEventListener('input', async () => {
+		textarea.addEventListener('input', () => {
 			this.plugin.settings.template = textarea.value;
-			await this.plugin.saveSettings();
+			void this.plugin.saveSettings();
 		});
 
 		new Setting(containerEl).addButton((btn) =>
@@ -409,17 +401,15 @@ class DictionarySettingTab extends PluginSettingTab {
 		});
 		support.appendText('.');
 
-		const bmcWrap = containerEl.createEl('p');
-		bmcWrap.style.marginTop = '14px';
+		const bmcWrap = containerEl.createEl('p', { cls: 'lex-bmc-link' });
 		const bmcLink = bmcWrap.createEl('a', {
 			href: 'https://buymeacoffee.com/bryanmanio',
 		});
 		bmcLink.setAttr('target', '_blank');
 		bmcLink.setAttr('rel', 'noopener');
-		const bmcImg = bmcLink.createEl('img');
+		const bmcImg = bmcLink.createEl('img', { cls: 'lex-bmc-img' });
 		bmcImg.src = 'https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png';
 		bmcImg.alt = 'Buy Me A Coffee';
-		bmcImg.style.cssText = 'height: 40px; width: auto; border-radius: 8px;';
 	}
 
 	// Renders the dictionary status pill + download/redownload button into the
@@ -430,27 +420,22 @@ class DictionarySettingTab extends PluginSettingTab {
 
 		const status = await this.plugin.store.status();
 
-		const row = container.createDiv();
-		row.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+		const row = container.createDiv({ cls: 'lex-dict-status-row' });
 
 		const pill = row.createSpan();
-		pill.style.cssText = 'font-weight: 600; padding: 2px 10px; border-radius: 12px; font-size: 12px;';
+		pill.addClass('lex-dict-status-pill');
 		if (status.ready) {
-			pill.style.background = 'var(--background-modifier-success)';
-			pill.style.color = 'var(--text-on-accent)';
+			pill.addClass('lex-dict-status-pill--ready');
 			pill.textContent = 'Ready';
 		} else if (status.sizeBytes !== null) {
-			pill.style.background = 'var(--background-modifier-border)';
-			pill.style.color = 'var(--text-muted)';
+			pill.addClass('lex-dict-status-pill--pending');
 			pill.textContent = 'Downloaded, not loaded';
 		} else {
-			pill.style.background = 'var(--background-modifier-error)';
-			pill.style.color = 'var(--text-on-accent)';
+			pill.addClass('lex-dict-status-pill--missing');
 			pill.textContent = 'Not downloaded';
 		}
 
-		const detail = row.createDiv();
-		detail.style.cssText = 'flex: 1; color: var(--text-muted); font-size: 12px;';
+		const detail = row.createDiv({ cls: 'lex-dict-status-detail' });
 		if (status.ready && status.entryCount !== null) {
 			const mb = status.sizeBytes ? (status.sizeBytes / 1024 / 1024).toFixed(1) : '?';
 			detail.textContent = `${status.entryCount.toLocaleString()} entries · ${mb}MB on disk`;
@@ -458,20 +443,21 @@ class DictionarySettingTab extends PluginSettingTab {
 			detail.textContent = 'Click Download to fetch the dictionary file.';
 		}
 
-		const btn = row.createEl('button');
-		btn.textContent = status.ready ? 'Re-download' : 'Download';
-		if (status.ready) btn.style.background = 'transparent';
-		btn.addEventListener('click', async () => {
-			btn.disabled = true;
-			btn.textContent = 'Downloading…';
-			try {
-				await this.plugin.store.download(DEFAULT_DICTIONARY_URL);
-				new Notice('Lexophile: dictionary downloaded and loaded.');
-			} catch (err) {
-				new Notice(`Lexophile: download failed — ${(err as Error).message}`);
-			} finally {
-				await this.renderDictionaryStatus(container);
-			}
+		const btn = row.createEl('button', { text: status.ready ? 'Re-download' : 'Download' });
+		if (status.ready) btn.addClass('lex-dict-status-button--ready');
+		btn.addEventListener('click', () => {
+			void (async () => {
+				btn.disabled = true;
+				btn.textContent = 'Downloading…';
+				try {
+					await this.plugin.store.download(DEFAULT_DICTIONARY_URL);
+					new Notice('Lexophile: dictionary downloaded and loaded.');
+				} catch (err) {
+					new Notice(`Lexophile: download failed — ${(err as Error).message}`);
+				} finally {
+					await this.renderDictionaryStatus(container);
+				}
+			})();
 		});
 	}
 }

@@ -1,6 +1,6 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { lookupWord, WordNotFoundError } from './dictionary';
-import { DictionaryNotReadyError, type DictionaryStore } from './dictionaryStore';
+import { type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
 import type { DictionarySettings } from './settings';
 
@@ -74,7 +74,7 @@ export class MassImportModal extends Modal {
 	}
 
 	onOpen() {
-		this.modalEl.style.maxWidth = '720px';
+		this.modalEl.addClass('lex-modal-wide');
 		this.stubUnfound = this.getSettings().stubUnfoundWords;
 		this.render();
 	}
@@ -101,31 +101,24 @@ export class MassImportModal extends Modal {
 			cls: 'setting-item-description',
 		});
 
-		const textarea = this.contentEl.createEl('textarea');
+		const textarea = this.contentEl.createEl('textarea', { cls: 'lex-mass-input' });
 		textarea.rows = 10;
 		textarea.placeholder = 'serendipity, ephemeral, perspicacious\ngossamer\nalacrity';
-		textarea.style.cssText =
-			'width: 100%; font-family: var(--font-monospace, monospace); font-size: 13px; padding: 10px; margin-bottom: 8px; resize: vertical;';
 		textarea.value = this.rawInput;
 		textarea.addEventListener('input', () => (this.rawInput = textarea.value));
 
 		if (this.inputError) {
-			const err = this.contentEl.createEl('p');
-			err.style.cssText = 'color: var(--text-error); font-size: 13px; margin-top: 4px;';
-			err.textContent = this.inputError;
+			this.contentEl.createEl('p', { text: this.inputError, cls: 'lex-error-line' });
 		}
 
-		const stubOpt = this.contentEl.createDiv();
-		stubOpt.style.cssText =
-			'display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+		const stubOpt = this.contentEl.createDiv({ cls: 'lex-stub-option' });
 		const cb = stubOpt.createEl('input');
 		cb.type = 'checkbox';
 		cb.id = 'lex-mass-stub';
 		cb.checked = this.stubUnfound;
 		cb.addEventListener('change', () => (this.stubUnfound = cb.checked));
-		const label = stubOpt.createEl('label');
+		const label = stubOpt.createEl('label', { cls: 'lex-stub-option-label' });
 		label.htmlFor = 'lex-mass-stub';
-		label.style.cssText = 'cursor: pointer; flex: 1;';
 		label.appendText('Create stub notes for words not found in the dictionary');
 
 		new Setting(this.contentEl)
@@ -180,34 +173,28 @@ export class MassImportModal extends Modal {
 			desc.appendText(`${dupCount} ${dupCount === 1 ? 'is' : 'are'} already in your lexicon and pre-unchecked.`);
 		}
 
-		const stubOpt = this.contentEl.createDiv();
-		stubOpt.style.cssText =
-			'display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; background: var(--background-secondary); border-radius: 6px; font-size: 13px;';
+		const stubOpt = this.contentEl.createDiv({ cls: 'lex-stub-option lex-stub-option--inline' });
 		const cb = stubOpt.createEl('input');
 		cb.type = 'checkbox';
 		cb.id = 'lex-mass-stub-2';
 		cb.checked = this.stubUnfound;
 		cb.addEventListener('change', () => (this.stubUnfound = cb.checked));
-		const label = stubOpt.createEl('label');
+		const label = stubOpt.createEl('label', { cls: 'lex-stub-option-label' });
 		label.htmlFor = 'lex-mass-stub-2';
-		label.style.cssText = 'cursor: pointer; flex: 1;';
 		label.appendText('Create stub notes for words not found in the dictionary');
 
-		const toolbar = this.contentEl.createDiv();
-		toolbar.style.cssText = 'display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;';
+		const toolbar = this.contentEl.createDiv({ cls: 'lex-toolbar' });
 
-		const searchEl = toolbar.createEl('input');
+		const searchEl = toolbar.createEl('input', { cls: 'lex-toolbar-search' });
 		searchEl.type = 'text';
 		searchEl.placeholder = 'Search words…';
-		searchEl.style.cssText = 'flex: 1; padding: 6px 10px; font-size: 13px;';
 		searchEl.value = this.searchQuery;
 		searchEl.addEventListener('input', () => {
 			this.searchQuery = searchEl.value;
 			this.refreshList();
 		});
 
-		const allBtn = toolbar.createEl('button');
-		allBtn.textContent = 'Select all';
+		const allBtn = toolbar.createEl('button', { text: 'Select all' });
 		allBtn.addEventListener('click', () => {
 			const visible = this.visibleItems();
 			const allOn = visible.every((i) => i.checked);
@@ -215,16 +202,13 @@ export class MassImportModal extends Modal {
 			this.refreshList();
 		});
 
-		const noneBtn = toolbar.createEl('button');
-		noneBtn.textContent = 'Clear';
+		const noneBtn = toolbar.createEl('button', { text: 'Clear' });
 		noneBtn.addEventListener('click', () => {
 			for (const item of this.visibleItems()) item.checked = false;
 			this.refreshList();
 		});
 
-		this.listEl = this.contentEl.createDiv();
-		this.listEl.style.cssText =
-			'max-height: 360px; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px;';
+		this.listEl = this.contentEl.createDiv({ cls: 'lex-wordlist lex-wordlist--narrow' });
 		this.refreshList();
 
 		const footer = new Setting(this.contentEl);
@@ -257,17 +241,13 @@ export class MassImportModal extends Modal {
 
 		const visible = this.visibleItems();
 		if (visible.length === 0) {
-			const empty = this.listEl.createDiv();
-			empty.style.cssText = 'padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;';
-			empty.textContent = 'No words match.';
+			this.listEl.createDiv({ cls: 'lex-wordlist-empty', text: 'No words match.' });
 			this.updateImportButtonLabel();
 			return;
 		}
 
 		for (const item of visible) {
-			const row = this.listEl.createDiv();
-			row.style.cssText =
-				'display: grid; grid-template-columns: auto 1fr 110px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer;';
+			const row = this.listEl.createDiv({ cls: 'lex-row lex-row--mass' });
 			row.addEventListener('click', (e) => {
 				if ((e.target as HTMLElement).tagName === 'INPUT') return;
 				item.checked = !item.checked;
@@ -282,21 +262,12 @@ export class MassImportModal extends Modal {
 				this.updateImportButtonLabel();
 			});
 
-			const word = row.createDiv();
-			word.style.cssText = 'font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-			word.textContent = item.word;
-			if (item.duplicate) {
-				word.style.color = 'var(--text-muted)';
-				word.style.textDecoration = 'line-through';
-			}
+			const wordCls = item.duplicate ? 'lex-row-word lex-row-word--duplicate' : 'lex-row-word';
+			row.createDiv({ cls: wordCls, text: item.word });
 
-			const tagCell = row.createDiv();
-			tagCell.style.cssText = 'text-align: right;';
+			const tagCell = row.createDiv({ cls: 'lex-row-tag-cell' });
 			if (item.duplicate) {
-				const pill = tagCell.createSpan();
-				pill.style.cssText =
-					'font-size: 11px; padding: 2px 8px; background: var(--background-modifier-border); border-radius: 10px; color: var(--text-muted); white-space: nowrap;';
-				pill.textContent = 'already saved';
+				tagCell.createSpan({ cls: 'lex-row-tag-pill', text: 'already saved' });
 			}
 		}
 
@@ -316,10 +287,10 @@ export class MassImportModal extends Modal {
 
 	private renderProgressState() {
 		this.contentEl.createEl('h3', { text: 'Importing…' });
-		this.progressEl = this.contentEl.createEl('p');
-		this.progressEl.style.cssText =
-			'font-family: monospace; font-size: 13px; padding: 8px 0; color: var(--text-muted);';
-		this.progressEl.textContent = this.progressLine || 'Starting…';
+		this.progressEl = this.contentEl.createEl('p', {
+			cls: 'lex-progress',
+			text: this.progressLine || 'Starting…',
+		});
 	}
 
 	private updateProgressLine(line: string) {
@@ -356,12 +327,12 @@ export class MassImportModal extends Modal {
 						stubbed = true;
 					} else {
 						this.summary.notFound.push(word);
-						if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+						if (i < queue.length - 1) await new Promise((r) => window.setTimeout(r, delayMs));
 						continue;
 					}
 				} else {
 					this.summary.errors.push({ word, reason: (err as Error).message });
-					if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+					if (i < queue.length - 1) await new Promise((r) => window.setTimeout(r, delayMs));
 					continue;
 				}
 			}
@@ -376,7 +347,7 @@ export class MassImportModal extends Modal {
 				this.summary.errors.push({ word, reason: (err as Error).message });
 			}
 
-			if (i < queue.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+			if (i < queue.length - 1) await new Promise((r) => window.setTimeout(r, delayMs));
 		}
 
 		this.state = 'done';
@@ -390,13 +361,16 @@ export class MassImportModal extends Modal {
 
 		const { imported, skipped, stubbed, notFound, errors } = this.summary;
 
-		const totals = this.contentEl.createEl('p');
-		totals.style.cssText = 'font-size: 14px; line-height: 1.6;';
-		const totalLines: string[] = [];
-		totalLines.push(`✓ Imported ${imported} word${imported === 1 ? '' : 's'}`);
-		if (stubbed) totalLines.push(`✎ Created ${stubbed} stub${stubbed === 1 ? '' : 's'} for unknown words`);
-		if (skipped) totalLines.push(`${skipped} already in your lexicon (skipped)`);
-		totals.innerHTML = totalLines.map((l) => `• ${l}`).join('<br>');
+		const totals = this.contentEl.createEl('ul', { cls: 'lex-totals' });
+		totals.createEl('li', { text: `✓ Imported ${imported} word${imported === 1 ? '' : 's'}` });
+		if (stubbed) {
+			totals.createEl('li', {
+				text: `✎ Created ${stubbed} stub${stubbed === 1 ? '' : 's'} for unknown words`,
+			});
+		}
+		if (skipped) {
+			totals.createEl('li', { text: `${skipped} already in your lexicon (skipped)` });
+		}
 
 		if (notFound.length > 0) {
 			this.renderWordListSection(
@@ -405,11 +379,13 @@ export class MassImportModal extends Modal {
 				"These words weren't found in the dictionary. They might be names, slang, compounds, or don't exist in the online dictionary we pull from."
 			);
 
-			const stubBtnWrap = this.contentEl.createDiv();
-			stubBtnWrap.style.cssText = 'margin-top: 8px;';
-			const stubBtn = stubBtnWrap.createEl('button');
-			stubBtn.textContent = `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? '' : 's'}`;
-			stubBtn.addEventListener('click', () => void this.stubNotFound(stubBtn));
+			const stubBtnWrap = this.contentEl.createDiv({ cls: 'lex-done-stub-btn-wrap' });
+			const stubBtn = stubBtnWrap.createEl('button', {
+				text: `Create stub notes for these ${notFound.length} word${notFound.length === 1 ? '' : 's'}`,
+			});
+			stubBtn.addEventListener('click', () => {
+				void this.stubNotFound(stubBtn);
+			});
 		}
 
 		if (errors.length > 0) {
@@ -462,36 +438,27 @@ export class MassImportModal extends Modal {
 	}
 
 	private renderWordListSection(title: string, words: string[], hint: string) {
-		const wrap = this.contentEl.createDiv();
-		wrap.style.cssText = 'margin-top: 16px;';
+		const wrap = this.contentEl.createDiv({ cls: 'lex-done-section' });
+		wrap.createEl('h4', { cls: 'lex-done-heading', text: title });
+		wrap.createEl('p', { cls: 'setting-item-description lex-done-hint', text: hint });
 
-		const heading = wrap.createEl('h4', { text: title });
-		heading.style.cssText = 'margin: 0 0 4px; font-size: 13px; font-weight: 600;';
-
-		const hintEl = wrap.createEl('p', { text: hint, cls: 'setting-item-description' });
-		hintEl.style.cssText = 'margin: 0 0 8px;';
-
-		const list = wrap.createDiv();
-		list.style.cssText =
-			'max-height: 160px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: var(--font-monospace, monospace);';
+		const list = wrap.createDiv({ cls: 'lex-done-list' });
 		for (const word of words) {
-			const row = list.createDiv();
-			row.style.cssText = 'padding: 2px 0;';
-			row.textContent = word;
+			list.createDiv({ cls: 'lex-done-list-row', text: word });
 		}
 
-		const copyBtn = wrap.createEl('button');
-		copyBtn.textContent = 'Copy list';
-		copyBtn.style.cssText = 'margin-top: 8px;';
-		copyBtn.addEventListener('click', async () => {
-			try {
-				await navigator.clipboard.writeText(words.join('\n'));
-				const original = copyBtn.textContent;
-				copyBtn.textContent = 'Copied!';
-				setTimeout(() => (copyBtn.textContent = original), 1500);
-			} catch {
-				new Notice('Could not copy to clipboard.');
-			}
+		const copyBtn = wrap.createEl('button', { cls: 'lex-done-copy-btn', text: 'Copy list' });
+		copyBtn.addEventListener('click', () => {
+			void (async () => {
+				try {
+					await navigator.clipboard.writeText(words.join('\n'));
+					const original = copyBtn.textContent;
+					copyBtn.textContent = 'Copied!';
+					window.setTimeout(() => (copyBtn.textContent = original), 1500);
+				} catch {
+					new Notice('Could not copy to clipboard.');
+				}
+			})();
 		});
 	}
 }
