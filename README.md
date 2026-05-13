@@ -1,8 +1,5 @@
 # Lexophile
 
-<img width="1200" height="800" alt="01" src="https://github.com/user-attachments/assets/db78580c-a229-45aa-8e0d-08c986bf3c35" />
-
-
 An Obsidian plugin for building a personal dictionary. Save any word you read to your vault as a definition note with the part of speech, example sentence, and a link back to where you found it.
 
 ## Features
