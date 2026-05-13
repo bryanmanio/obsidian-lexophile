@@ -26,7 +26,7 @@ That's it. Everything stays in your vault as Markdown.
 To install manually:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/bryanmanio/obsidian-lexophile/releases/latest)
-2. Drop them in `<your vault>/.obsidian/plugins/lexophile/`
+2. Drop them in the `.obsidian/plugins/lexophile/` folder inside your vault (create it if it doesn't exist)
 3. Enable **Lexophile - Personal Dictionary** in Obsidian's community plugins settings
 
 ## Use
@@ -37,7 +37,7 @@ To install manually:
 
 **Kobo import**: in settings, enable Kobo import. Plug in your Kobo, run `Lexophile: Import words from Kobo`, and pick the words you want to save.
 
-**Web capture**: install the [Chrome extension](https://github.com/bryanmanio/lexophile-chrome-extension). Highlight a word, right-click, choose `Add "<word>" to Lexophile`.
+**Web capture**: install the [Chrome extension](https://github.com/bryanmanio/lexophile-chrome-extension). Highlight a word on any page, right-click, and choose the **Add to Lexophile** menu item.
 
 ## Offline mode
 
