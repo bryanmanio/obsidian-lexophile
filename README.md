@@ -21,7 +21,9 @@ That's it. Everything stays in your vault as Markdown.
 
 ## Install
 
-Not in the community store yet. To install manually:
+[Download from the community](https://community.obsidian.md/plugins/lexophile). 
+
+To install manually:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/bryanmanio/obsidian-lexophile/releases/latest)
 2. Drop them in `<your vault>/.obsidian/plugins/lexophile/`
