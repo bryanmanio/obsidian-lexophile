@@ -418,7 +418,7 @@ export class KoboImportModal extends Modal {
 
 		switch (settings.unmatchedBookHandling) {
 			case 'create':
-				await ensureBookStub(this.app, settings.booksFolder, bookName);
+				await ensureBookStub(this.app, settings.booksFolder, bookName, settings.bookTemplate);
 				existingBooks.add(bookName.toLowerCase());
 				return `[[${bookName}]]`;
 			case 'linkOnly':

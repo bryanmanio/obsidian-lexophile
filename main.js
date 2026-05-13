@@ -2510,6 +2510,39 @@ function candidateForms(word) {
   return forms;
 }
 
+// src/template.ts
+var FRONTMATTER_PATTERN = /^(---\n)([\s\S]*?)(\n---\n?)([\s\S]*)$/;
+var PLACEHOLDER_PATTERN = /\{\{(\w+)\}\}/g;
+var EMPTY_LABEL_LINE = /^\s*\*\*[^*]+:\*\*\s*$/;
+var TRIPLE_NEWLINE = /\n{3,}/g;
+function renderTemplate(template, values, includeFrontmatter = true) {
+  const fmMatch = FRONTMATTER_PATTERN.exec(template);
+  let output;
+  if (fmMatch) {
+    const [, fmStart, fmContent, fmEnd, body] = fmMatch;
+    const renderedFm = substitute(fmContent, values, escapeYamlDouble);
+    const renderedBody = substitute(body, values, (s) => s);
+    output = includeFrontmatter ? fmStart + renderedFm + fmEnd + renderedBody : renderedBody;
+  } else {
+    output = substitute(template, values, (s) => s);
+  }
+  return stripEmptyLabelLines(output);
+}
+function substitute(text, values, transform) {
+  return text.replace(PLACEHOLDER_PATTERN, (match, key) => {
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      return transform(values[key]);
+    }
+    return match;
+  });
+}
+function escapeYamlDouble(value) {
+  return (value != null ? value : "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+}
+function stripEmptyLabelLines(content) {
+  return content.split("\n").filter((line) => !EMPTY_LABEL_LINE.test(line)).join("\n").replace(TRIPLE_NEWLINE, "\n\n");
+}
+
 // src/lexicon.ts
 function createStubEntry(word, source = "") {
   return {
@@ -2586,32 +2619,7 @@ function renderEntry(entry, settings, includeFrontmatter) {
     source: (_d = entry.source) != null ? _d : "",
     familiarity: classifyFamiliarity(entry.word)
   };
-  const template = settings.template;
-  const fmMatch = template.match(/^(---\n)([\s\S]*?)(\n---\n?)([\s\S]*)$/);
-  let output;
-  if (fmMatch) {
-    const [, fmStart, fmContent, fmEnd, body] = fmMatch;
-    const renderedFm = substitute(fmContent, values, escapeYamlDouble);
-    const renderedBody = substitute(body, values, (s) => s);
-    output = includeFrontmatter ? fmStart + renderedFm + fmEnd + renderedBody : renderedBody;
-  } else {
-    output = substitute(template, values, (s) => s);
-  }
-  return stripEmptyLabelLines(output);
-}
-function substitute(text, values, transform) {
-  return text.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-    if (Object.prototype.hasOwnProperty.call(values, key)) {
-      return transform(values[key]);
-    }
-    return match;
-  });
-}
-function escapeYamlDouble(value) {
-  return (value != null ? value : "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
-}
-function stripEmptyLabelLines(content) {
-  return content.split("\n").filter((line) => !/^\s*\*\*[^*]+:\*\*\s*$/.test(line)).join("\n").replace(/\n{3,}/g, "\n\n");
+  return renderTemplate(settings.wordTemplate, values, includeFrontmatter);
 }
 
 // src/server.ts
@@ -3155,7 +3163,7 @@ function bookNoteExists(app, folder, title) {
   const filePath = (0, import_obsidian7.normalizePath)(`${(0, import_obsidian7.normalizePath)(folder)}/${cleaned}.md`);
   return app.vault.getAbstractFileByPath(filePath) instanceof import_obsidian7.TFile;
 }
-async function ensureBookStub(app, folder, title) {
+async function ensureBookStub(app, folder, title, template) {
   const cleaned = cleanBookTitle(title);
   if (!cleaned)
     return;
@@ -3164,13 +3172,7 @@ async function ensureBookStub(app, folder, title) {
   if (app.vault.getAbstractFileByPath(filePath))
     return;
   const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const content = `---
-type: book
-date-added: ${today}
----
-
-# ${cleaned}
-`;
+  const content = renderTemplate(template, { title: cleaned, date: today });
   await app.vault.create(filePath, content);
 }
 
@@ -3490,7 +3492,7 @@ var KoboImportModal = class extends import_obsidian8.Modal {
       return `[[${bookName}]]`;
     switch (settings.unmatchedBookHandling) {
       case "create":
-        await ensureBookStub(this.app, settings.booksFolder, bookName);
+        await ensureBookStub(this.app, settings.booksFolder, bookName, settings.bookTemplate);
         existingBooks.add(bookName.toLowerCase());
         return `[[${bookName}]]`;
       case "linkOnly":
@@ -4018,7 +4020,7 @@ var FolderSuggest = class extends import_obsidian10.AbstractInputSuggest {
 };
 
 // src/settings.ts
-var DEFAULT_TEMPLATE = `---
+var DEFAULT_WORD_TEMPLATE = `---
 tags: dictionary
 date-added: {{date}}
 source: "{{source}}"
@@ -4033,10 +4035,25 @@ familiarity: {{familiarity}}
 
 **Definition:** {{definition}}
 `;
+var DEFAULT_BOOK_TEMPLATE = `---
+tags: book
+type: book
+status: unread
+author:
+series:
+rating:
+isbn:
+date-added: {{date}}
+date-finished:
+---
+
+# {{title}}
+`;
 var DEFAULT_SETTINGS = {
   folder: "Dictionary",
   namingConvention: "titlecase",
-  template: DEFAULT_TEMPLATE,
+  wordTemplate: DEFAULT_WORD_TEMPLATE,
+  bookTemplate: DEFAULT_BOOK_TEMPLATE,
   port: 27124,
   apiToken: "",
   duplicateHandling: "skip",
@@ -4125,8 +4142,13 @@ var DictionaryPlugin = class extends import_obsidian11.Plugin {
     }
   }
   async loadSettings() {
-    const stored = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored != null ? stored : {});
+    var _a;
+    const stored = (_a = await this.loadData()) != null ? _a : {};
+    if (stored.template && !stored.wordTemplate) {
+      stored.wordTemplate = stored.template;
+    }
+    delete stored.template;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -4278,25 +4300,24 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
         await this.plugin.startServer();
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("Note template").setHeading();
+    new import_obsidian11.Setting(containerEl).setName("Templates").setHeading();
     containerEl.createEl("p", {
-      text: "Variables: {{word}}, {{partOfSpeech}}, {{definition}}, {{example}}, {{date}}, {{source}}",
-      cls: "setting-item-description"
+      cls: "setting-item-description",
+      text: "Each entity type Lexophile creates has its own template. Use {{variable}} placeholders inside frontmatter or the body \u2014 empty values are stripped."
     });
-    const textareaWrap = containerEl.createDiv({ cls: "lex-template-wrap" });
-    const textarea = textareaWrap.createEl("textarea", { cls: "lex-template-textarea" });
-    textarea.rows = 16;
-    textarea.value = this.plugin.settings.template;
-    textarea.addEventListener("input", () => {
-      this.plugin.settings.template = textarea.value;
-      void this.plugin.saveSettings();
-    });
-    new import_obsidian11.Setting(containerEl).addButton(
-      (btn) => btn.setButtonText("Reset to default").onClick(async () => {
-        this.plugin.settings.template = DEFAULT_TEMPLATE;
-        await this.plugin.saveSettings();
-        textarea.value = DEFAULT_TEMPLATE;
-      })
+    this.renderTemplateEditor(
+      containerEl,
+      "Word note template",
+      "Variables: {{word}}, {{partOfSpeech}}, {{definition}}, {{example}}, {{phonetic}}, {{familiarity}}, {{source}}, {{date}}",
+      "wordTemplate",
+      DEFAULT_WORD_TEMPLATE
+    );
+    this.renderTemplateEditor(
+      containerEl,
+      "Book note template",
+      "Used when Kobo import creates a stub for a book that isn't in your library. Variables: {{title}}, {{date}}",
+      "bookTemplate",
+      DEFAULT_BOOK_TEMPLATE
     );
     const support = containerEl.createEl("p", { cls: "setting-item-description" });
     support.appendText("Need support? ");
@@ -4314,6 +4335,27 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
     const bmcImg = bmcLink.createEl("img", { cls: "lex-bmc-img" });
     bmcImg.src = "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png";
     bmcImg.alt = "Buy Me A Coffee";
+  }
+  // Renders a labelled textarea bound to one of the template settings, with
+  // a Reset button. Shared by the Word and Book template editors.
+  renderTemplateEditor(container, label, helpText, settingKey, defaultValue) {
+    new import_obsidian11.Setting(container).setName(label);
+    container.createEl("p", { cls: "setting-item-description", text: helpText });
+    const wrap = container.createDiv({ cls: "lex-template-wrap" });
+    const textarea = wrap.createEl("textarea", { cls: "lex-template-textarea" });
+    textarea.rows = 14;
+    textarea.value = this.plugin.settings[settingKey];
+    textarea.addEventListener("input", () => {
+      this.plugin.settings[settingKey] = textarea.value;
+      void this.plugin.saveSettings();
+    });
+    new import_obsidian11.Setting(container).addButton(
+      (btn) => btn.setButtonText("Reset to default").onClick(async () => {
+        this.plugin.settings[settingKey] = defaultValue;
+        await this.plugin.saveSettings();
+        textarea.value = defaultValue;
+      })
+    );
   }
   // Renders the dictionary status pill + download/redownload button into the
   // given container. Kept on the settings tab class so it can re-render
