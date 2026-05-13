@@ -11,7 +11,7 @@ An Obsidian plugin for building a personal dictionary. Save any word you read to
 - Auto-generated table view of your full lexicon
 - Familiarity score on every word (common / familiar / obscure)
 - Optional offline mode using a bundled English dictionary
-- Custom note templates
+- Custom note templates for each entity type (words and books each get their own)
 
 ## How it works
 

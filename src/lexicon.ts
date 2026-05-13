@@ -1,6 +1,7 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import { ensureDictionaryBase } from './base';
 import { classifyFamiliarity } from './familiarity';
+import { renderTemplate, type TemplateValues } from './template';
 import type { DictionarySettings } from './settings';
 
 export interface WordEntry {
@@ -113,7 +114,7 @@ function renderEntry(
 	includeFrontmatter: boolean
 ): string {
 	const today = new Date().toISOString().split('T')[0];
-	const values: Record<string, string> = {
+	const values: TemplateValues = {
 		word: entry.word,
 		partOfSpeech: entry.partOfSpeech ?? '',
 		definition: entry.definition,
@@ -124,51 +125,5 @@ function renderEntry(
 		familiarity: classifyFamiliarity(entry.word),
 	};
 
-	const template = settings.template;
-	const fmMatch = template.match(/^(---\n)([\s\S]*?)(\n---\n?)([\s\S]*)$/);
-
-	let output: string;
-	if (fmMatch) {
-		const [, fmStart, fmContent, fmEnd, body] = fmMatch;
-		const renderedFm = substitute(fmContent, values, escapeYamlDouble);
-		const renderedBody = substitute(body, values, (s) => s);
-		output = includeFrontmatter ? fmStart + renderedFm + fmEnd + renderedBody : renderedBody;
-	} else {
-		output = substitute(template, values, (s) => s);
-	}
-
-	return stripEmptyLabelLines(output);
-}
-
-function substitute(
-	text: string,
-	values: Record<string, string>,
-	transform: (s: string) => string
-): string {
-	return text.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
-		if (Object.prototype.hasOwnProperty.call(values, key)) {
-			return transform(values[key]);
-		}
-		return match;
-	});
-}
-
-// Escape a value for placement inside a YAML double-quoted scalar.
-function escapeYamlDouble(value: string): string {
-	return (value ?? '')
-		.replace(/\\/g, '\\\\')
-		.replace(/"/g, '\\"')
-		.replace(/\n/g, '\\n')
-		.replace(/\r/g, '\\r')
-		.replace(/\t/g, '\\t');
-}
-
-// Removes body lines that look like "**Label:** " with no value after substitution.
-// Frontmatter (key: value) lines are untouched — they don't match the **bold** pattern.
-function stripEmptyLabelLines(content: string): string {
-	return content
-		.split('\n')
-		.filter((line) => !/^\s*\*\*[^*]+:\*\*\s*$/.test(line))
-		.join('\n')
-		.replace(/\n{3,}/g, '\n\n');
+	return renderTemplate(settings.wordTemplate, values, includeFrontmatter);
 }

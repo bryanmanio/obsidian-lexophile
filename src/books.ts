@@ -1,4 +1,5 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
+import { renderTemplate } from './template';
 
 const LOWERCASE_WORDS = new Set([
 	'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in',
@@ -45,7 +46,16 @@ export function bookNoteExists(app: App, folder: string, title: string): boolean
 	return app.vault.getAbstractFileByPath(filePath) instanceof TFile;
 }
 
-export async function ensureBookStub(app: App, folder: string, title: string): Promise<void> {
+// Creates a book note from the user-configurable book template. Available
+// variables: {{title}}, {{date}}. The template comes from settings, so the
+// user can pre-populate Kepano-style frontmatter (author, series, rating,
+// etc.) and have every new book stub conform to the same schema.
+export async function ensureBookStub(
+	app: App,
+	folder: string,
+	title: string,
+	template: string
+): Promise<void> {
 	const cleaned = cleanBookTitle(title);
 	if (!cleaned) return;
 
@@ -55,12 +65,6 @@ export async function ensureBookStub(app: App, folder: string, title: string): P
 	if (app.vault.getAbstractFileByPath(filePath)) return;
 
 	const today = new Date().toISOString().split('T')[0];
-	const content = `---
-type: book
-date-added: ${today}
----
-
-# ${cleaned}
-`;
+	const content = renderTemplate(template, { title: cleaned, date: today });
 	await app.vault.create(filePath, content);
 }

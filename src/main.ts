@@ -5,7 +5,7 @@ import { AddWordModal } from './wordModal';
 import { KoboImportModal } from './koboImportModal';
 import { MassImportModal } from './massImportModal';
 import { FolderSuggest } from './folderSuggest';
-import { DEFAULT_SETTINGS, DEFAULT_TEMPLATE } from './settings';
+import { DEFAULT_BOOK_TEMPLATE, DEFAULT_SETTINGS, DEFAULT_WORD_TEMPLATE } from './settings';
 import type { DictionarySettings } from './settings';
 
 export default class DictionaryPlugin extends Plugin {
@@ -101,8 +101,16 @@ export default class DictionaryPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const stored = (await this.loadData()) as Partial<DictionarySettings> | null;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
+		// Pre-1.3.0 stored a single `template` field (the word template).
+		// Migrate it into `wordTemplate` on load and drop the legacy key so the
+		// next save persists the new shape.
+		type LegacySettings = Partial<DictionarySettings> & { template?: string };
+		const stored = ((await this.loadData()) as LegacySettings | null) ?? {};
+		if (stored.template && !stored.wordTemplate) {
+			stored.wordTemplate = stored.template;
+		}
+		delete stored.template;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
 	}
 
 	async saveSettings() {
@@ -369,30 +377,29 @@ class DictionarySettingTab extends PluginSettingTab {
 				})
 			);
 
-		// ── Template ─────────────────────────────────────────────────
+		// ── Templates ────────────────────────────────────────────────
 
-		new Setting(containerEl).setName('Note template').setHeading();
+		new Setting(containerEl).setName('Templates').setHeading();
 
 		containerEl.createEl('p', {
-			text: 'Variables: {{word}}, {{partOfSpeech}}, {{definition}}, {{example}}, {{date}}, {{source}}',
 			cls: 'setting-item-description',
+			text: 'Each entity type Lexophile creates has its own template. Use {{variable}} placeholders inside frontmatter or the body — empty values are stripped.',
 		});
 
-		const textareaWrap = containerEl.createDiv({ cls: 'lex-template-wrap' });
-		const textarea = textareaWrap.createEl('textarea', { cls: 'lex-template-textarea' });
-		textarea.rows = 16;
-		textarea.value = this.plugin.settings.template;
-		textarea.addEventListener('input', () => {
-			this.plugin.settings.template = textarea.value;
-			void this.plugin.saveSettings();
-		});
+		this.renderTemplateEditor(
+			containerEl,
+			'Word note template',
+			'Variables: {{word}}, {{partOfSpeech}}, {{definition}}, {{example}}, {{phonetic}}, {{familiarity}}, {{source}}, {{date}}',
+			'wordTemplate',
+			DEFAULT_WORD_TEMPLATE
+		);
 
-		new Setting(containerEl).addButton((btn) =>
-			btn.setButtonText('Reset to default').onClick(async () => {
-				this.plugin.settings.template = DEFAULT_TEMPLATE;
-				await this.plugin.saveSettings();
-				textarea.value = DEFAULT_TEMPLATE;
-			})
+		this.renderTemplateEditor(
+			containerEl,
+			'Book note template',
+			'Used when Kobo import creates a stub for a book that isn\'t in your library. Variables: {{title}}, {{date}}',
+			'bookTemplate',
+			DEFAULT_BOOK_TEMPLATE
 		);
 
 		// ── Feedback ─────────────────────────────────────────────────
@@ -414,6 +421,36 @@ class DictionarySettingTab extends PluginSettingTab {
 		const bmcImg = bmcLink.createEl('img', { cls: 'lex-bmc-img' });
 		bmcImg.src = 'https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png';
 		bmcImg.alt = 'Buy Me A Coffee';
+	}
+
+	// Renders a labelled textarea bound to one of the template settings, with
+	// a Reset button. Shared by the Word and Book template editors.
+	private renderTemplateEditor(
+		container: HTMLElement,
+		label: string,
+		helpText: string,
+		settingKey: 'wordTemplate' | 'bookTemplate',
+		defaultValue: string
+	) {
+		new Setting(container).setName(label);
+		container.createEl('p', { cls: 'setting-item-description', text: helpText });
+
+		const wrap = container.createDiv({ cls: 'lex-template-wrap' });
+		const textarea = wrap.createEl('textarea', { cls: 'lex-template-textarea' });
+		textarea.rows = 14;
+		textarea.value = this.plugin.settings[settingKey];
+		textarea.addEventListener('input', () => {
+			this.plugin.settings[settingKey] = textarea.value;
+			void this.plugin.saveSettings();
+		});
+
+		new Setting(container).addButton((btn) =>
+			btn.setButtonText('Reset to default').onClick(async () => {
+				this.plugin.settings[settingKey] = defaultValue;
+				await this.plugin.saveSettings();
+				textarea.value = defaultValue;
+			})
+		);
 	}
 
 	// Renders the dictionary status pill + download/redownload button into the
