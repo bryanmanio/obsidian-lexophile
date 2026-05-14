@@ -46,25 +46,56 @@ export function bookNoteExists(app: App, folder: string, title: string): boolean
 	return app.vault.getAbstractFileByPath(filePath) instanceof TFile;
 }
 
-// Creates a book note from the user-configurable book template. Available
-// variables: {{title}}, {{date}}. The template comes from settings, so the
-// user can pre-populate Kepano-style frontmatter (author, series, rating,
-// etc.) and have every new book stub conform to the same schema.
+// Returns the basename of any note in the vault that matches the given name
+// case-insensitively, or null if none exists. Lets the mass-import flow link
+// to an existing source by typed name regardless of which folder it lives in.
+export function findNoteByName(app: App, name: string): string | null {
+	const cleaned = cleanBookTitle(name);
+	if (!cleaned) return null;
+	const target = cleaned.toLowerCase();
+	for (const file of app.vault.getMarkdownFiles()) {
+		if (file.basename.toLowerCase() === target) return file.basename;
+	}
+	return null;
+}
+
+// Creates an entity note (book, source, etc.) from a user-configurable
+// template. Available variables: {{title}}, {{date}}. Returns the cleaned
+// title used in the filename, or null if nothing was created (empty title,
+// or a file already exists at the resolved path).
+export async function ensureEntityStub(
+	app: App,
+	folder: string,
+	title: string,
+	template: string
+): Promise<string | null> {
+	const cleaned = cleanBookTitle(title);
+	if (!cleaned) return null;
+
+	const folderPath = folder ? normalizePath(folder) : '';
+	const filePath = folderPath
+		? normalizePath(`${folderPath}/${cleaned}.md`)
+		: normalizePath(`${cleaned}.md`);
+
+	if (app.vault.getAbstractFileByPath(filePath)) return cleaned;
+
+	if (folderPath && !app.vault.getAbstractFileByPath(folderPath)) {
+		await app.vault.adapter.mkdir(folderPath);
+	}
+
+	const today = new Date().toISOString().split('T')[0];
+	const content = renderTemplate(template, { title: cleaned, date: today });
+	await app.vault.create(filePath, content);
+	return cleaned;
+}
+
+// Back-compat alias for the Kobo import call site (which only cares about
+// fire-and-forget book stub creation, not the resolved title).
 export async function ensureBookStub(
 	app: App,
 	folder: string,
 	title: string,
 	template: string
 ): Promise<void> {
-	const cleaned = cleanBookTitle(title);
-	if (!cleaned) return;
-
-	const folderPath = normalizePath(folder);
-	const filePath = normalizePath(`${folderPath}/${cleaned}.md`);
-
-	if (app.vault.getAbstractFileByPath(filePath)) return;
-
-	const today = new Date().toISOString().split('T')[0];
-	const content = renderTemplate(template, { title: cleaned, date: today });
-	await app.vault.create(filePath, content);
+	await ensureEntityStub(app, folder, title, template);
 }

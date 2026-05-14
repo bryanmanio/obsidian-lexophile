@@ -8,6 +8,8 @@ export interface DictionarySettings {
 	namingConvention: NamingConvention;
 	wordTemplate: string;
 	bookTemplate: string;
+	sourceTemplate: string;
+	sourcesFolder: string;
 	port: number;
 	apiToken: string;
 	duplicateHandling: DuplicateHandling;
@@ -53,11 +55,24 @@ date-finished:
 # {{title}}
 `;
 
+// Minimal default for the "source" stub created on-the-fly during mass-import
+// when the user types a name that isn't yet a note in the vault. Kept short
+// because the user's actual note type (book, article, course, …) is unknown;
+// they can switch to the book template or any custom one in settings.
+export const DEFAULT_SOURCE_TEMPLATE = `---
+date-added: {{date}}
+---
+
+# {{title}}
+`;
+
 export const DEFAULT_SETTINGS: DictionarySettings = {
 	folder: 'Dictionary',
 	namingConvention: 'titlecase',
 	wordTemplate: DEFAULT_WORD_TEMPLATE,
 	bookTemplate: DEFAULT_BOOK_TEMPLATE,
+	sourceTemplate: DEFAULT_SOURCE_TEMPLATE,
+	sourcesFolder: '',
 	port: 27124,
 	apiToken: '',
 	duplicateHandling: 'skip',

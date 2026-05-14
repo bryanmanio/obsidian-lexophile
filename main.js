@@ -2424,7 +2424,7 @@ __export(main_exports, {
   default: () => DictionaryPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian11 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 
 // src/server.ts
 var http = __toESM(require("http"));
@@ -3163,17 +3163,35 @@ function bookNoteExists(app, folder, title) {
   const filePath = (0, import_obsidian7.normalizePath)(`${(0, import_obsidian7.normalizePath)(folder)}/${cleaned}.md`);
   return app.vault.getAbstractFileByPath(filePath) instanceof import_obsidian7.TFile;
 }
-async function ensureBookStub(app, folder, title, template) {
+function findNoteByName(app, name) {
+  const cleaned = cleanBookTitle(name);
+  if (!cleaned)
+    return null;
+  const target = cleaned.toLowerCase();
+  for (const file of app.vault.getMarkdownFiles()) {
+    if (file.basename.toLowerCase() === target)
+      return file.basename;
+  }
+  return null;
+}
+async function ensureEntityStub(app, folder, title, template) {
   const cleaned = cleanBookTitle(title);
   if (!cleaned)
-    return;
-  const folderPath = (0, import_obsidian7.normalizePath)(folder);
-  const filePath = (0, import_obsidian7.normalizePath)(`${folderPath}/${cleaned}.md`);
+    return null;
+  const folderPath = folder ? (0, import_obsidian7.normalizePath)(folder) : "";
+  const filePath = folderPath ? (0, import_obsidian7.normalizePath)(`${folderPath}/${cleaned}.md`) : (0, import_obsidian7.normalizePath)(`${cleaned}.md`);
   if (app.vault.getAbstractFileByPath(filePath))
-    return;
+    return cleaned;
+  if (folderPath && !app.vault.getAbstractFileByPath(folderPath)) {
+    await app.vault.adapter.mkdir(folderPath);
+  }
   const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
   const content = renderTemplate(template, { title: cleaned, date: today });
   await app.vault.create(filePath, content);
+  return cleaned;
+}
+async function ensureBookStub(app, folder, title, template) {
+  await ensureEntityStub(app, folder, title, template);
 }
 
 // src/koboImportModal.ts
@@ -3602,7 +3620,40 @@ var KoboImportModal = class extends import_obsidian8.Modal {
 };
 
 // src/massImportModal.ts
+var import_obsidian10 = require("obsidian");
+
+// src/noteSuggest.ts
 var import_obsidian9 = require("obsidian");
+var NoteSuggest = class extends import_obsidian9.AbstractInputSuggest {
+  constructor(app, inputEl) {
+    super(app, inputEl);
+    this.notes = this.collectNotes();
+  }
+  collectNotes() {
+    const names = /* @__PURE__ */ new Set();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      names.add(file.basename);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }
+  getSuggestions(query) {
+    const q = query.trim().toLowerCase();
+    if (!q)
+      return this.notes.slice(0, 12);
+    return this.notes.filter((n) => n.toLowerCase().includes(q)).slice(0, 12);
+  }
+  renderSuggestion(note, el) {
+    el.setText(note);
+  }
+  selectSuggestion(note) {
+    this.setValue(note);
+    const inputEl = this.inputEl;
+    inputEl.dispatchEvent(new Event("input"));
+    this.close();
+  }
+};
+
+// src/massImportModal.ts
 var API_DELAY_MS2 = 350;
 var LOCAL_YIELD_MS2 = 0;
 function parseWordList(raw) {
@@ -3620,14 +3671,18 @@ function parseWordList(raw) {
   }
   return out;
 }
-var MassImportModal = class extends import_obsidian9.Modal {
+var MassImportModal = class extends import_obsidian10.Modal {
   constructor(app, getSettings, store) {
     super(app);
     this.state = "input";
     // Input state
     this.rawInput = "";
     this.stubUnfound = false;
+    this.sourceName = "";
     this.inputError = "";
+    // Resolved on import: the wikilink target (basename, without brackets) to
+    // stamp into each word's `source` frontmatter, or '' for plain "manual".
+    this.resolvedSource = "";
     // Word list state
     this.items = [];
     this.searchQuery = "";
@@ -3672,6 +3727,14 @@ var MassImportModal = class extends import_obsidian9.Modal {
     textarea.placeholder = "serendipity, ephemeral, perspicacious\ngossamer\nalacrity";
     textarea.value = this.rawInput;
     textarea.addEventListener("input", () => this.rawInput = textarea.value);
+    const settings = this.getSettings();
+    const sourceFolderLabel = settings.sourcesFolder ? `\u201C${settings.sourcesFolder}\u201D` : "your vault root";
+    new import_obsidian10.Setting(this.contentEl).setName("Source (optional)").setDesc(
+      `Pick or type a note name \u2014 each imported word's source will link to it. If the note doesn't exist, it'll be created in ${sourceFolderLabel}. Leave blank to use plain "manual".`
+    ).addText((text) => {
+      text.setPlaceholder("Search notes\u2026").setValue(this.sourceName).onChange((v) => this.sourceName = v);
+      new NoteSuggest(this.app, text.inputEl);
+    });
     if (this.inputError) {
       this.contentEl.createEl("p", { text: this.inputError, cls: "lex-error-line" });
     }
@@ -3684,7 +3747,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
     const label = stubOpt.createEl("label", { cls: "lex-stub-option-label" });
     label.htmlFor = "lex-mass-stub";
     label.appendText("Create stub notes for words not found in the dictionary");
-    new import_obsidian9.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Cancel").onClick(() => this.close())).addButton(
+    new import_obsidian10.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Cancel").onClick(() => this.close())).addButton(
       (btn) => btn.setButtonText("Parse list").setCta().onClick(() => this.parseInput())
     );
     window.setTimeout(() => textarea.focus(), 0);
@@ -3757,7 +3820,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
     });
     this.listEl = this.contentEl.createDiv({ cls: "lex-wordlist lex-wordlist--narrow" });
     this.refreshList();
-    const footer = new import_obsidian9.Setting(this.contentEl);
+    const footer = new import_obsidian10.Setting(this.contentEl);
     footer.addButton(
       (btn) => btn.setButtonText("Back").onClick(() => {
         this.state = "input";
@@ -3830,6 +3893,30 @@ var MassImportModal = class extends import_obsidian9.Modal {
     if (this.progressEl)
       this.progressEl.textContent = line;
   }
+  // Turns the user's typed source name into a wikilink target, creating a
+  // stub note in `settings.sourcesFolder` if no existing note matches.
+  // Returns `'[[Name]]'` (with brackets) or `''` if no source was provided.
+  async resolveSourceName(settings) {
+    const typed = this.sourceName.trim();
+    if (!typed)
+      return "";
+    const existing = findNoteByName(this.app, typed);
+    if (existing)
+      return `[[${existing}]]`;
+    try {
+      const created = await ensureEntityStub(
+        this.app,
+        settings.sourcesFolder,
+        typed,
+        settings.sourceTemplate
+      );
+      if (created)
+        return `[[${created}]]`;
+    } catch (err) {
+      console.warn(`[Lexophile] failed to create source stub "${typed}":`, err.message);
+    }
+    return "";
+  }
   async runImport() {
     const queue = this.items.filter((i) => i.checked);
     if (queue.length === 0)
@@ -3840,6 +3927,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
     this.render();
     const settings = this.getSettings();
     const delayMs = settings.dictionarySource === "api" ? API_DELAY_MS2 : LOCAL_YIELD_MS2;
+    this.resolvedSource = await this.resolveSourceName(settings);
     for (let i = 0; i < queue.length; i++) {
       if (this.cancelRequested)
         break;
@@ -3867,7 +3955,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
           continue;
         }
       }
-      entry.source = "manual";
+      entry.source = this.resolvedSource || "manual";
       try {
         const result = await createWordNote(this.app, settings, entry);
         if (result.action === "skipped")
@@ -3921,7 +4009,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
         "Likely network issues. Try the import again later."
       );
     }
-    new import_obsidian9.Setting(this.contentEl).addButton(
+    new import_obsidian10.Setting(this.contentEl).addButton(
       (btn) => btn.setButtonText("Close").setCta().onClick(() => this.close())
     );
     if (imported > 0 || stubbed > 0) {
@@ -3930,7 +4018,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
         parts.push(`imported ${imported}`);
       if (stubbed > 0)
         parts.push(`stubbed ${stubbed}`);
-      new import_obsidian9.Notice(`Lexophile: ${parts.join(", ")} word${imported + stubbed === 1 ? "" : "s"}.`);
+      new import_obsidian10.Notice(`Lexophile: ${parts.join(", ")} word${imported + stubbed === 1 ? "" : "s"}.`);
     }
   }
   async stubNotFound(triggerBtn) {
@@ -3944,7 +4032,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
     const stillFailed = [];
     for (const word of pending) {
       try {
-        const entry = createStubEntry(word, "manual");
+        const entry = createStubEntry(word, this.resolvedSource || "manual");
         const result = await createWordNote(this.app, settings, entry);
         if (result.action !== "skipped")
           created++;
@@ -3955,7 +4043,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
     }
     this.summary.stubbed += created;
     this.summary.notFound = stillFailed;
-    new import_obsidian9.Notice(`Lexophile: created ${created} stub${created === 1 ? "" : "s"}.`);
+    new import_obsidian10.Notice(`Lexophile: created ${created} stub${created === 1 ? "" : "s"}.`);
     this.render();
   }
   renderWordListSection(title, words, hint) {
@@ -3975,7 +4063,7 @@ var MassImportModal = class extends import_obsidian9.Modal {
           copyBtn.textContent = "Copied!";
           window.setTimeout(() => copyBtn.textContent = original, 1500);
         } catch (e) {
-          new import_obsidian9.Notice("Could not copy to clipboard.");
+          new import_obsidian10.Notice("Could not copy to clipboard.");
         }
       })();
     });
@@ -3983,8 +4071,8 @@ var MassImportModal = class extends import_obsidian9.Modal {
 };
 
 // src/folderSuggest.ts
-var import_obsidian10 = require("obsidian");
-var FolderSuggest = class extends import_obsidian10.AbstractInputSuggest {
+var import_obsidian11 = require("obsidian");
+var FolderSuggest = class extends import_obsidian11.AbstractInputSuggest {
   constructor(app, inputEl, extraDefaults = []) {
     super(app, inputEl);
     this.folders = this.collectFolders(extraDefaults);
@@ -3995,7 +4083,7 @@ var FolderSuggest = class extends import_obsidian10.AbstractInputSuggest {
       if (folder.path)
         set.add(folder.path);
       for (const child of folder.children) {
-        if (child instanceof import_obsidian10.TFolder)
+        if (child instanceof import_obsidian11.TFolder)
           walk(child);
       }
     };
@@ -4049,11 +4137,19 @@ date-finished:
 
 # {{title}}
 `;
+var DEFAULT_SOURCE_TEMPLATE = `---
+date-added: {{date}}
+---
+
+# {{title}}
+`;
 var DEFAULT_SETTINGS = {
   folder: "Dictionary",
   namingConvention: "titlecase",
   wordTemplate: DEFAULT_WORD_TEMPLATE,
   bookTemplate: DEFAULT_BOOK_TEMPLATE,
+  sourceTemplate: DEFAULT_SOURCE_TEMPLATE,
+  sourcesFolder: "",
   port: 27124,
   apiToken: "",
   duplicateHandling: "skip",
@@ -4067,7 +4163,7 @@ var DEFAULT_SETTINGS = {
 };
 
 // src/main.ts
-var DictionaryPlugin = class extends import_obsidian11.Plugin {
+var DictionaryPlugin = class extends import_obsidian12.Plugin {
   async onload() {
     await this.loadSettings();
     this.store = new DictionaryStore(this.app, this);
@@ -4102,7 +4198,7 @@ var DictionaryPlugin = class extends import_obsidian11.Plugin {
       name: "Import words from Kobo",
       callback: () => {
         if (!this.settings.enableKoboImport) {
-          new import_obsidian11.Notice("Lexophile: enable Kobo import in Settings \u2192 Lexophile first.");
+          new import_obsidian12.Notice("Lexophile: enable Kobo import in Settings \u2192 Lexophile first.");
           return;
         }
         new KoboImportModal(this.app, () => this.settings, this.store).open();
@@ -4129,9 +4225,9 @@ var DictionaryPlugin = class extends import_obsidian11.Plugin {
   async startServer() {
     try {
       await this.server.start(this.settings.port);
-      new import_obsidian11.Notice(`Lexophile: server running on port ${this.settings.port}`);
+      new import_obsidian12.Notice(`Lexophile: server running on port ${this.settings.port}`);
     } catch (err) {
-      new import_obsidian11.Notice(`Lexophile: failed to start server \u2014 ${err.message}`);
+      new import_obsidian12.Notice(`Lexophile: failed to start server \u2014 ${err.message}`);
       console.error("[Lexophile]", err);
     }
   }
@@ -4154,7 +4250,7 @@ var DictionaryPlugin = class extends import_obsidian11.Plugin {
     await this.saveData(this.settings);
   }
 };
-var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
+var DictionarySettingTab = class extends import_obsidian12.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -4173,7 +4269,7 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
     fromBrowser.appendText("From the web: install the Lexophile Chrome extension, highlight a word, right-click, and choose ");
     fromBrowser.createEl("strong", { text: 'Add "<word>" to Lexophile' });
     fromBrowser.appendText(".");
-    new import_obsidian11.Setting(containerEl).setName("Dictionary source").setDesc("Online uses the free Dictionary API. Local downloads ~23MB once and works offline.").addDropdown(
+    new import_obsidian12.Setting(containerEl).setName("Dictionary source").setDesc("Online uses the free Dictionary API. Local downloads ~23MB once and works offline.").addDropdown(
       (drop) => drop.addOption("api", "Online (Free Dictionary API)").addOption("local", "Local (offline)").setValue(this.plugin.settings.dictionarySource).onChange(async (value) => {
         this.plugin.settings.dictionarySource = value;
         await this.plugin.saveSettings();
@@ -4191,25 +4287,25 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
       });
       credit.appendText(".");
     }
-    new import_obsidian11.Setting(containerEl).setName("Dictionary folder").setDesc("Folder where new notes will be created. Created automatically if it does not exist.").addText(
+    new import_obsidian12.Setting(containerEl).setName("Dictionary folder").setDesc("Folder where new notes will be created. Created automatically if it does not exist.").addText(
       (text) => text.setPlaceholder("Dictionary").setValue(this.plugin.settings.folder).onChange(async (value) => {
         this.plugin.settings.folder = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("Note naming").setDesc("How to capitalize the note filename.").addDropdown(
+    new import_obsidian12.Setting(containerEl).setName("Note naming").setDesc("How to capitalize the note filename.").addDropdown(
       (drop) => drop.addOption("asis", "As-is").addOption("lowercase", "lowercase").addOption("titlecase", "Title Case").setValue(this.plugin.settings.namingConvention).onChange(async (value) => {
         this.plugin.settings.namingConvention = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("Duplicate handling").setDesc("What to do when a note for the word already exists.").addDropdown(
+    new import_obsidian12.Setting(containerEl).setName("Duplicate handling").setDesc("What to do when a note for the word already exists.").addDropdown(
       (drop) => drop.addOption("skip", "Skip \u2014 keep existing note").addOption("append", "Append new definition").addOption("overwrite", "Overwrite").setValue(this.plugin.settings.duplicateHandling).onChange(async (value) => {
         this.plugin.settings.duplicateHandling = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("Create stubs for unknown words").setDesc(
+    new import_obsidian12.Setting(containerEl).setName("Create stubs for unknown words").setDesc(
       "When the dictionary has no entry for a word (a name, slang, technical term), save a stub note with empty fields instead of failing. You can fill in the definition later."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.stubUnfoundWords).onChange(async (value) => {
@@ -4217,7 +4313,7 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("Automatically create dictionary base").setDesc("Create a Bases file in the dictionary folder that lists every word in a table view.").addToggle(
+    new import_obsidian12.Setting(containerEl).setName("Automatically create dictionary base").setDesc("Create a Bases file in the dictionary folder that lists every word in a table view.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoCreateBase).onChange(async (value) => {
         this.plugin.settings.autoCreateBase = value;
         await this.plugin.saveSettings();
@@ -4225,19 +4321,19 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
       })
     );
     if (this.plugin.settings.autoCreateBase) {
-      new import_obsidian11.Setting(containerEl).setName("Base name").setDesc("Filename (without extension) for the auto-created base.").addText(
+      new import_obsidian12.Setting(containerEl).setName("Base name").setDesc("Filename (without extension) for the auto-created base.").addText(
         (text) => text.setPlaceholder("_Dictionary List").setValue(this.plugin.settings.baseName).onChange(async (value) => {
           this.plugin.settings.baseName = value;
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian11.Setting(containerEl).setName("Kobo eReader import").setHeading();
+    new import_obsidian12.Setting(containerEl).setName("Kobo eReader import").setHeading();
     const koboIntro = containerEl.createEl("p", { cls: "setting-item-description" });
     koboIntro.appendText("Import words you saved on your Kobo. Plug your Kobo into your computer, then run ");
     koboIntro.createEl("strong", { text: "Lexophile: Import words from Kobo" });
     koboIntro.appendText(" from the command palette. Each word becomes a dictionary note; its source links back to the book it came from in your library.");
-    new import_obsidian11.Setting(containerEl).setName("Enable Kobo import").setDesc("Reveals the Kobo settings and unlocks the import command.").addToggle(
+    new import_obsidian12.Setting(containerEl).setName("Enable Kobo import").setDesc("Reveals the Kobo settings and unlocks the import command.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableKoboImport).onChange(async (value) => {
         this.plugin.settings.enableKoboImport = value;
         await this.plugin.saveSettings();
@@ -4245,9 +4341,9 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
       })
     );
     if (this.plugin.settings.enableKoboImport) {
-      const booksFolderPath = (0, import_obsidian11.normalizePath)(this.plugin.settings.booksFolder || "Books");
-      const folderExists = this.app.vault.getAbstractFileByPath(booksFolderPath) instanceof import_obsidian11.TFolder;
-      new import_obsidian11.Setting(containerEl).setName("Books folder").setDesc(
+      const booksFolderPath = (0, import_obsidian12.normalizePath)(this.plugin.settings.booksFolder || "Books");
+      const folderExists = this.app.vault.getAbstractFileByPath(booksFolderPath) instanceof import_obsidian12.TFolder;
+      new import_obsidian12.Setting(containerEl).setName("Books folder").setDesc(
         folderExists ? `\u2713 Folder exists at "${booksFolderPath}". New book notes will be created here.` : `"${booksFolderPath}" doesn't exist yet. Create it below or pick another folder.`
       ).addText((text) => {
         text.setPlaceholder("Books").setValue(this.plugin.settings.booksFolder).onChange(async (value) => {
@@ -4258,27 +4354,27 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
         new FolderSuggest(this.app, text.inputEl, ["Books"]);
       });
       if (!folderExists) {
-        new import_obsidian11.Setting(containerEl).setName("Create books folder").setDesc(`Creates "${booksFolderPath}" so wikilinks resolve.`).addButton(
+        new import_obsidian12.Setting(containerEl).setName("Create books folder").setDesc(`Creates "${booksFolderPath}" so wikilinks resolve.`).addButton(
           (btn) => btn.setButtonText("Create folder").setCta().onClick(async () => {
             try {
               await this.app.vault.createFolder(booksFolderPath);
-              new import_obsidian11.Notice(`Lexophile: created "${booksFolderPath}".`);
+              new import_obsidian12.Notice(`Lexophile: created "${booksFolderPath}".`);
               this.display();
             } catch (err) {
-              new import_obsidian11.Notice(`Lexophile: ${err.message}`);
+              new import_obsidian12.Notice(`Lexophile: ${err.message}`);
             }
           })
         );
       }
-      new import_obsidian11.Setting(containerEl).setName("When a book isn't in your library").setDesc("What to do during import if the chosen book name has no matching note in the books folder.").addDropdown(
+      new import_obsidian12.Setting(containerEl).setName("When a book isn't in your library").setDesc("What to do during import if the chosen book name has no matching note in the books folder.").addDropdown(
         (drop) => drop.addOption("create", "Auto-create a stub book note").addOption("linkOnly", "Link without creating (red wikilinks)").addOption("plainText", "Use plain text source instead").setValue(this.plugin.settings.unmatchedBookHandling).onChange(async (value) => {
           this.plugin.settings.unmatchedBookHandling = value;
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian11.Setting(containerEl).setName("Local server").setHeading();
-    new import_obsidian11.Setting(containerEl).setName("Port").setDesc("Port the plugin listens on. Requires a server restart to take effect.").addText(
+    new import_obsidian12.Setting(containerEl).setName("Local server").setHeading();
+    new import_obsidian12.Setting(containerEl).setName("Port").setDesc("Port the plugin listens on. Requires a server restart to take effect.").addText(
       (text) => text.setPlaceholder("27124").setValue(String(this.plugin.settings.port)).onChange(async (value) => {
         const port = parseInt(value, 10);
         if (!isNaN(port) && port > 1023 && port < 65536) {
@@ -4287,20 +4383,20 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
         }
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("API token").setDesc("Secret the Chrome extension must send. Leave blank to disable auth (not recommended).").addText((text) => {
+    new import_obsidian12.Setting(containerEl).setName("API token").setDesc("Secret the Chrome extension must send. Leave blank to disable auth (not recommended).").addText((text) => {
       text.setPlaceholder("leave blank to disable").setValue(this.plugin.settings.apiToken).onChange(async (value) => {
         this.plugin.settings.apiToken = value;
         await this.plugin.saveSettings();
       });
       text.inputEl.type = "password";
     });
-    new import_obsidian11.Setting(containerEl).setName("Restart server").setDesc("Apply port changes by restarting the local server.").addButton(
+    new import_obsidian12.Setting(containerEl).setName("Restart server").setDesc("Apply port changes by restarting the local server.").addButton(
       (btn) => btn.setButtonText("Restart").onClick(async () => {
         await this.plugin.stopServer();
         await this.plugin.startServer();
       })
     );
-    new import_obsidian11.Setting(containerEl).setName("Templates").setHeading();
+    new import_obsidian12.Setting(containerEl).setName("Templates").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "Each entity type Lexophile creates has its own template. Use {{variable}} placeholders inside frontmatter or the body \u2014 empty values are stripped."
@@ -4319,6 +4415,22 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
       "bookTemplate",
       DEFAULT_BOOK_TEMPLATE
     );
+    this.renderTemplateEditor(
+      containerEl,
+      "Source note template",
+      "Used when mass-import creates a stub for a source you typed that doesn't exist yet. Variables: {{title}}, {{date}}",
+      "sourceTemplate",
+      DEFAULT_SOURCE_TEMPLATE
+    );
+    new import_obsidian12.Setting(containerEl).setName("Sources folder").setDesc(
+      "Folder where new source notes are created during mass-import. Leave blank to create them at the vault root."
+    ).addText((text) => {
+      text.setPlaceholder("(vault root)").setValue(this.plugin.settings.sourcesFolder).onChange(async (value) => {
+        this.plugin.settings.sourcesFolder = value.trim();
+        await this.plugin.saveSettings();
+      });
+      new FolderSuggest(this.app, text.inputEl, ["Sources"]);
+    });
     const support = containerEl.createEl("p", { cls: "setting-item-description" });
     support.appendText("Need support? ");
     support.createEl("a", {
@@ -4339,7 +4451,7 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
   // Renders a labelled textarea bound to one of the template settings, with
   // a Reset button. Shared by the Word and Book template editors.
   renderTemplateEditor(container, label, helpText, settingKey, defaultValue) {
-    new import_obsidian11.Setting(container).setName(label);
+    new import_obsidian12.Setting(container).setName(label);
     container.createEl("p", { cls: "setting-item-description", text: helpText });
     const wrap = container.createDiv({ cls: "lex-template-wrap" });
     const textarea = wrap.createEl("textarea", { cls: "lex-template-textarea" });
@@ -4349,7 +4461,7 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
       this.plugin.settings[settingKey] = textarea.value;
       void this.plugin.saveSettings();
     });
-    new import_obsidian11.Setting(container).addButton(
+    new import_obsidian12.Setting(container).addButton(
       (btn) => btn.setButtonText("Reset to default").onClick(async () => {
         this.plugin.settings[settingKey] = defaultValue;
         await this.plugin.saveSettings();
@@ -4392,9 +4504,9 @@ var DictionarySettingTab = class extends import_obsidian11.PluginSettingTab {
         btn.textContent = "Downloading\u2026";
         try {
           await this.plugin.store.download(DEFAULT_DICTIONARY_URL);
-          new import_obsidian11.Notice("Lexophile: dictionary downloaded and loaded.");
+          new import_obsidian12.Notice("Lexophile: dictionary downloaded and loaded.");
         } catch (err) {
-          new import_obsidian11.Notice(`Lexophile: download failed \u2014 ${err.message}`);
+          new import_obsidian12.Notice(`Lexophile: download failed \u2014 ${err.message}`);
         } finally {
           await this.renderDictionaryStatus(container);
         }
