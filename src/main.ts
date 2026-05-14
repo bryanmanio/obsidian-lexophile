@@ -5,7 +5,12 @@ import { AddWordModal } from './wordModal';
 import { KoboImportModal } from './koboImportModal';
 import { MassImportModal } from './massImportModal';
 import { FolderSuggest } from './folderSuggest';
-import { DEFAULT_BOOK_TEMPLATE, DEFAULT_SETTINGS, DEFAULT_WORD_TEMPLATE } from './settings';
+import {
+	DEFAULT_BOOK_TEMPLATE,
+	DEFAULT_SETTINGS,
+	DEFAULT_SOURCE_TEMPLATE,
+	DEFAULT_WORD_TEMPLATE,
+} from './settings';
 import type { DictionarySettings } from './settings';
 
 export default class DictionaryPlugin extends Plugin {
@@ -402,6 +407,30 @@ class DictionarySettingTab extends PluginSettingTab {
 			DEFAULT_BOOK_TEMPLATE
 		);
 
+		this.renderTemplateEditor(
+			containerEl,
+			'Source note template',
+			'Used when mass-import creates a stub for a source you typed that doesn\'t exist yet. Variables: {{title}}, {{date}}',
+			'sourceTemplate',
+			DEFAULT_SOURCE_TEMPLATE
+		);
+
+		new Setting(containerEl)
+			.setName('Sources folder')
+			.setDesc(
+				'Folder where new source notes are created during mass-import. Leave blank to create them at the vault root.'
+			)
+			.addText((text) => {
+				text
+					.setPlaceholder('(vault root)')
+					.setValue(this.plugin.settings.sourcesFolder)
+					.onChange(async (value) => {
+						this.plugin.settings.sourcesFolder = value.trim();
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl, ['Sources']);
+			});
+
 		// ── Feedback ─────────────────────────────────────────────────
 
 		const support = containerEl.createEl('p', { cls: 'setting-item-description' });
@@ -429,7 +458,7 @@ class DictionarySettingTab extends PluginSettingTab {
 		container: HTMLElement,
 		label: string,
 		helpText: string,
-		settingKey: 'wordTemplate' | 'bookTemplate',
+		settingKey: 'wordTemplate' | 'bookTemplate' | 'sourceTemplate',
 		defaultValue: string
 	) {
 		new Setting(container).setName(label);

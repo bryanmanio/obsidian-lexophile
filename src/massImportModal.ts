@@ -2,6 +2,8 @@ import { App, Modal, Notice, Setting } from 'obsidian';
 import { lookupWord, WordNotFoundError } from './dictionary';
 import { type DictionaryStore } from './dictionaryStore';
 import { createStubEntry, createWordNote, wordNoteExists, type WordEntry } from './lexicon';
+import { ensureEntityStub, findNoteByName } from './books';
+import { NoteSuggest } from './noteSuggest';
 import type { DictionarySettings } from './settings';
 
 // Spacing between consecutive lookups. The free Dictionary API rate-limits
@@ -51,7 +53,12 @@ export class MassImportModal extends Modal {
 	// Input state
 	private rawInput = '';
 	private stubUnfound = false;
+	private sourceName = '';
 	private inputError = '';
+
+	// Resolved on import: the wikilink target (basename, without brackets) to
+	// stamp into each word's `source` frontmatter, or '' for plain "manual".
+	private resolvedSource = '';
 
 	// Word list state
 	private items: WordItem[] = [];
@@ -106,6 +113,26 @@ export class MassImportModal extends Modal {
 		textarea.placeholder = 'serendipity, ephemeral, perspicacious\ngossamer\nalacrity';
 		textarea.value = this.rawInput;
 		textarea.addEventListener('input', () => (this.rawInput = textarea.value));
+
+		// Source picker — links every imported word to one note.
+		const settings = this.getSettings();
+		const sourceFolderLabel = settings.sourcesFolder
+			? `“${settings.sourcesFolder}”`
+			: 'your vault root';
+
+		new Setting(this.contentEl)
+			.setName('Source (optional)')
+			.setDesc(
+				`Pick or type a note name — each imported word's source will link to it. ` +
+					`If the note doesn't exist, it'll be created in ${sourceFolderLabel}. Leave blank to use plain "manual".`
+			)
+			.addText((text) => {
+				text
+					.setPlaceholder('Search notes…')
+					.setValue(this.sourceName)
+					.onChange((v) => (this.sourceName = v));
+				new NoteSuggest(this.app, text.inputEl);
+			});
 
 		if (this.inputError) {
 			this.contentEl.createEl('p', { text: this.inputError, cls: 'lex-error-line' });
@@ -298,6 +325,30 @@ export class MassImportModal extends Modal {
 		if (this.progressEl) this.progressEl.textContent = line;
 	}
 
+	// Turns the user's typed source name into a wikilink target, creating a
+	// stub note in `settings.sourcesFolder` if no existing note matches.
+	// Returns `'[[Name]]'` (with brackets) or `''` if no source was provided.
+	private async resolveSourceName(settings: DictionarySettings): Promise<string> {
+		const typed = this.sourceName.trim();
+		if (!typed) return '';
+
+		const existing = findNoteByName(this.app, typed);
+		if (existing) return `[[${existing}]]`;
+
+		try {
+			const created = await ensureEntityStub(
+				this.app,
+				settings.sourcesFolder,
+				typed,
+				settings.sourceTemplate
+			);
+			if (created) return `[[${created}]]`;
+		} catch (err) {
+			console.warn(`[Lexophile] failed to create source stub "${typed}":`, (err as Error).message);
+		}
+		return '';
+	}
+
 	private async runImport() {
 		const queue = this.items.filter((i) => i.checked);
 		if (queue.length === 0) return;
@@ -309,6 +360,10 @@ export class MassImportModal extends Modal {
 
 		const settings = this.getSettings();
 		const delayMs = settings.dictionarySource === 'api' ? API_DELAY_MS : LOCAL_YIELD_MS;
+
+		// Resolve the source once for the whole batch. If the user picked or
+		// typed a name, link to it; create a stub note if it doesn't exist.
+		this.resolvedSource = await this.resolveSourceName(settings);
 
 		for (let i = 0; i < queue.length; i++) {
 			if (this.cancelRequested) break;
@@ -337,7 +392,7 @@ export class MassImportModal extends Modal {
 				}
 			}
 
-			entry.source = 'manual';
+			entry.source = this.resolvedSource || 'manual';
 			try {
 				const result = await createWordNote(this.app, settings, entry);
 				if (result.action === 'skipped') this.summary.skipped++;
@@ -422,7 +477,7 @@ export class MassImportModal extends Modal {
 
 		for (const word of pending) {
 			try {
-				const entry = createStubEntry(word, 'manual');
+				const entry = createStubEntry(word, this.resolvedSource || 'manual');
 				const result = await createWordNote(this.app, settings, entry);
 				if (result.action !== 'skipped') created++;
 			} catch (err) {
